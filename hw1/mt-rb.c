@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <pthread.h>
+#include <sys/time.h>
 
 #define MAX(a,b) ((a>b)? (a): (b))
 
@@ -93,8 +94,6 @@ void redblack(int id)
     }
     barrier(id);
 
-    if(N <= 10)
-        printGrid(grid);
     for (iters = 1; iters <= MAXITERS+1; iters++)
     {
         for (i = firstRow; i <= lastRow; i++)
@@ -140,9 +139,9 @@ void redblack(int id)
 
 void *worker(void *arg)
 {
-  int id = *((int *) arg);
-  redblack(id);
-  return NULL;
+    int id = *((int *) arg);
+    redblack(id);
+    return NULL;
 }
 
 int main(int argc, char *argv[])
@@ -151,6 +150,8 @@ int main(int argc, char *argv[])
     int *p;
     pthread_t *threads;
     double MAXDIFF = 0;
+    struct timeval tv;
+    double startTime, endTime;
 
     if (argc != 4)
     {
@@ -181,6 +182,9 @@ int main(int argc, char *argv[])
     // Allocate thread handles
     threads = (pthread_t *) malloc(numThreads * sizeof(pthread_t));
 
+    gettimeofday(&tv, NULL);
+    startTime = tv.tv_sec + tv.tv_usec/1000000.0;
+
     // Create threads 
     for (i = 0; i < numThreads; i++) 
     {
@@ -195,9 +199,13 @@ int main(int argc, char *argv[])
     }
     for (i = 0; i < numThreads; i++)
 	MAXDIFF = MAX(MAXDIFF, maxdiff[i]);
+    gettimeofday(&tv, NULL);
+    endTime = tv.tv_sec + tv.tv_usec/1000000.0;
 
     if(N <= 10)
     	printGrid(grid);
-    printf("Maxdiff is %lf \n", MAXDIFF);
+
+    printf("#MPI Ranks : 0\t#Threads : %d\tExec. Time : %.3lf\tMaxdiff : %lf\n", numThreads, 
+	   (double)endTime - startTime, MAXDIFF);
 
 }

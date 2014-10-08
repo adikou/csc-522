@@ -13,6 +13,7 @@ int main(int argc, char *argv[])
     int numElements, offset, stripSize, gridSize, myrank; 
     int	HEIGHT, MAXITERS, numnodes, N, i, j, jStart, k;
     int firstRow, lastRow, iters;
+    int numThreads, chunkSize = 10;
 
     MPI_Init(&argc, &argv);
 
@@ -23,8 +24,11 @@ int main(int argc, char *argv[])
     gridSize = N+2;
     MAXITERS = atoi(argv[2]);
     HEIGHT = N/numnodes;
-
+    numThreads = atoi(argv[3]);
     
+    omp_set_dynamic(0);
+    omp_set_num_threads(numThreads);
+
     if (myrank == 0 && N<10) 
     {
     	tmp = (double *) malloc (sizeof(double ) * gridSize * gridSize);
@@ -84,6 +88,8 @@ int main(int argc, char *argv[])
     // do the work
     for (iters = 1; iters <= MAXITERS+1; iters++)
     {
+
+        #pragma omp parallel for shared(grid, numThreads, maxdiff) private(i,j, mydiff) schedule(static, chunkSize)
         for (i = 1; i <= HEIGHT; i++)
         {
             if(i%2 == 1)  jStart = 1;
@@ -121,7 +127,7 @@ int main(int argc, char *argv[])
 
 	MPI_Barrier(MPI_COMM_WORLD);
 
-	
+        #pragma omp parallel for shared(grid, numThreads,maxdiff) private(i,j, mydiff) schedule(static, chunkSize)
         for (i = 1; i <= HEIGHT; i++)
         {
             if(i%2 == 1)  jStart = 2;
@@ -186,8 +192,8 @@ int main(int argc, char *argv[])
     if (myrank == 0) 
     {
     	endTime = MPI_Wtime();
-   	printf("#MPI Ranks : %d\t#Threads : 0\tExec. Time : %.3lf\tMaxdiff : %lf\n", numnodes,
-           (double)endTime - startTime, MAXDIFF);
+   	printf("#MPI Ranks : %d\t#Threads : %d\tExec. Time : %.3lf\tMaxdiff : %lf\n", numnodes,
+           	numThreads, (double)endTime - startTime, MAXDIFF);
     }
     // print out matrix here, if I'm the master
     if (N < 10 && myrank == 0) 

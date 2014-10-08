@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <stdlib.h>
 #include <math.h>
+#include <sys/time.h>
 
 #define MAX(a,b) ((a>b)? (a): (b))
 
@@ -90,12 +91,16 @@ void redblack()
 int main(int argc, char *argv[]) 
 {
     int i, j;
+    struct timeval tv;
+    double startTime, endTime;
+
     if (argc != 3) 
     {
         exit(1);
     }
 
-
+    gettimeofday(&tv, NULL);
+    startTime = tv.tv_sec + tv.tv_usec/1000000.0;
 
     N = atoi(argv[1]);
     gridSize = N+2;
@@ -121,7 +126,10 @@ int main(int argc, char *argv[])
     redblack();
     if (N <= 24)   // print matrix if relatively small
         printGrid(grid);
-
-   printf("Maxdiff is %lf \n", maxdiff);
+    
+    gettimeofday(&tv, NULL);
+    endTime = tv.tv_sec + tv.tv_usec/1000000.0;
+    printf("#MPI Ranks : 0\t#Threads : 0\tExec. Time : %.3lf\tMaxdiff : %lf\n",
+           (double)endTime - startTime, maxdiff);
 
 }
