@@ -73,6 +73,8 @@ int main(int argc, char *argv[])
             }
         }
     }
+
+    /* Ensure that no node moves ahead until the entire grid is initialised */
     MPI_Barrier(MPI_COMM_WORLD);
 
     // start timer
@@ -119,6 +121,7 @@ int main(int argc, char *argv[])
 		     myrank+1, TAG, MPI_COMM_WORLD);
 	}
 
+	/* Sync the nodes to ensure symmetric values for the black computation */
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	
@@ -155,8 +158,11 @@ int main(int argc, char *argv[])
 	    MPI_Send(grid[HEIGHT], gridSize, MPI_DOUBLE, 
 		     myrank+1, TAG, MPI_COMM_WORLD);
 	}
+	
+	/* Sync for next iteration which begins with red computation */
 	MPI_Barrier(MPI_COMM_WORLD);
     }
+    /* Ensure all nodes reach this point before MPI_Reduce(maxdiff) is calculated in main() */
     MPI_Barrier(MPI_COMM_WORLD);
 
     // master receives from workers  -- note could be done via MPI_Gather

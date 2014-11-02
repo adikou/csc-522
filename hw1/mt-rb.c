@@ -92,6 +92,8 @@ void redblack(int id)
             else grid[i][j] = 0;
         }
     }
+ 
+    /* Ensure that no thread moves ahead until the entire grid is initialised */
     barrier(id);
 
     for (iters = 1; iters <= MAXITERS+1; iters++)
@@ -114,6 +116,8 @@ void redblack(int id)
                     maxdiff[id] = MAX(maxdiff[id], fabs(grid[i][j] - mydiff));
             }
         }
+
+	/* Sync the threads to ensure symmetric values for the black computation */
 	barrier(id);
         for (i = firstRow; i <= lastRow; i++)
         {
@@ -132,8 +136,12 @@ void redblack(int id)
                     maxdiff[id] = MAX(maxdiff[id], fabs(grid[i][j] - mydiff));
             }
         }
+
+	/* Sync for next iteration which begins with red computation */
 	barrier(id);
     }
+
+    /* Ensure all threads reach this point before max(maxdiff) is calculated in main() */
     barrier(id);
 }
 
