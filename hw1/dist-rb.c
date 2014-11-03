@@ -109,6 +109,8 @@ int main(int argc, char *argv[])
 	{
 	    MPI_Send(grid[1], gridSize, MPI_DOUBLE, 
 	             myrank-1, TAG, MPI_COMM_WORLD);
+
+        wait(2);
 	    MPI_Recv(grid[0], gridSize, MPI_DOUBLE, 
 		     myrank-1, TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 	} 
