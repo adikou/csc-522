@@ -34,7 +34,7 @@ _EXTERN_C_ void pmpi_init__(MPI_Fint *ierr);
  * Global per-node data structures and constants                    *
  * **************************************************************** */
 
-#define USCORE "_"
+#define PLUS "+"
 
 /* ================== Constants for MPI Operations ================== */
 #define _MPI_INIT_       0
@@ -70,9 +70,12 @@ typedef struct vertexMetaData
 typedef struct graphVertex
 {
     char *key;
+    char *interTreeParent;
+    char *opName;
     int fromRank, toRank;
     int tag, opSeq;
     int weight;
+    int idInMatrix;
 } graphVertex;
 
 int myRank, numNodes;
@@ -81,9 +84,9 @@ char *baseFileName = "tmp", *fileName;
 
 double startTime, endTime;
 
-int **opSeqCount, totalOps = 0, *numVertices;
+int **opSeqCount, totalOps = 0, *numVertices, numCollectives = 0;
 graphVertex **keys;
-int **adjMatrix;
+int **adjMatrix, numGraphVertices, *rankOffsetInMatrix;
 
 char *lastParentKey;
 
@@ -114,6 +117,46 @@ void initOpSeqCount()
             opSeqCount[i][j] = 0;
 }
 
+void countCollectives()
+{
+    int j;
+    for (j = 0; j < numVertices[0]; ++j)
+    {
+        switch(strcmp(keys[0][j].opName, "MPI_Barrier"))
+        {
+            case 0 : numCollectives++; break;
+        }
+    }
+}
+
+void decomposeKey(graphVertex *vertex)
+{
+    char *buf, i = 0;
+    char *string = (char*)malloc(strlen(vertex->key) + 1);
+    strcpy(string, vertex->key);
+    buf = strtok(string,"+");
+    while(buf)
+    {
+        switch(i)
+        {
+            case 0 : printf("%s ", buf);vertex->opName = (char*)malloc(strlen(buf) + 1);
+                     strcpy(vertex->opName, buf);
+                     break;
+            case 1 : printf("%s ", buf); vertex->fromRank = atoi(buf);
+                     break;
+            case 2 : printf("%s ", buf);vertex->toRank = atoi(buf);
+                     break;
+            case 3 : printf("%s ", buf);vertex->tag = atoi(buf);
+                     break;
+            case 4 : printf("%s ", buf);vertex->opSeq = atoi(buf);
+                     break;
+        }
+
+        buf = strtok(NULL,"+");
+        i++;
+    }
+}
+
 void generateKey(char *key, int op, int fromRank, int toRank, 
                  int tag, int opSeq)
 {
@@ -135,14 +178,14 @@ void generateKey(char *key, int op, int fromRank, int toRank,
         case _MPI_FINALIZE_     : baseOp = "MPI_Finalize"; break;
     }
 
-    strcpy(key, baseOp); strncat(key, USCORE, sizeof(USCORE));
+    strcpy(key, baseOp); strncat(key, PLUS, sizeof(PLUS));
     buf = malloc(2);
     sprintf(buf, "%d", fromRank); strncat(key, buf, sizeof(buf)); 
-    strncat(key, USCORE, sizeof(USCORE));    
+    strncat(key, PLUS, sizeof(PLUS));    
     sprintf(buf, "%d", toRank); strncat(key, buf, sizeof(buf)); 
-    strncat(key, USCORE, sizeof(USCORE));
+    strncat(key, PLUS, sizeof(PLUS));
     sprintf(buf, "%d", tag); strncat(key, buf, sizeof(buf)); 
-    strncat(key, USCORE, sizeof(USCORE));
+    strncat(key, PLUS, sizeof(PLUS));
     sprintf(buf, "%d", opSeq); strncat(key, buf, sizeof(buf));
 }
 
@@ -524,6 +567,7 @@ _EXTERN_C_ int MPI_Init(int *argc, char ***argv)
     {
         totalOps++;
         numVertices = (int*) malloc(numNodes * sizeof(int));
+        rankOffsetInMatrix = (int*) malloc(numNodes * sizeof(int));
         keys = (graphVertex**) malloc (numNodes * sizeof(graphVertex*));
     }
 
@@ -539,9 +583,9 @@ _EXTERN_C_ int MPI_Finalize()
     char ch, *bufKey, *line = NULL;
     ssize_t read; 
     size_t len = 0;
-    int t = 0;
+    int idInMatrix;
     int countTillEquals = 0, i, j, k, totalVerticesSoFar = 0;
-    int m,n;
+    int m,n, *bytes;
     FILE *fp; 
     graphVertex *vals = NULL;
 
@@ -592,23 +636,58 @@ _EXTERN_C_ int MPI_Finalize()
                     bufKey = strtok(line, "\t\n");
                     keys[i][j].key = (char*)malloc(strlen(bufKey) + 1);
                     strcpy(keys[i][j].key, bufKey);
-                    printf("%d %s\n", (int)strlen(keys[i][j].key), keys[i][j].key);
+                    decomposeKey(&keys[i][j]);
+                    printf("%s %d %d %d %d\n", keys[i][j].opName, 
+                            keys[i][j].fromRank, keys[i][j].toRank, 
+                            keys[i][j].tag, keys[i][j].opSeq);
+                    
                 }
             }
             fclose(fin);
         }
+        countCollectives();
 
-        for (i = 0; i < numNodes; i++)
+        numGraphVertices = numVertices[0];
+        rankOffsetInMatrix[0] = 0;
+        for (i = 1; i < numNodes; ++i)
         {
-            printf("%d ",numVertices[i]);
-            for (j = 0; j < numVertices[i]; j++)
+            numGraphVertices += numVertices[i] - numCollectives; 
+            rankOffsetInMatrix[i] = numGraphVertices - 
+                                    (numVertices[i] - numCollectives);
+        }
+
+        printf("%d %d\n", numCollectives, numGraphVertices);
+        adjMatrix = (int**) malloc(numGraphVertices * sizeof(int*));
+        bytes =(int*)malloc(numGraphVertices * numGraphVertices * sizeof(int));
+
+        for(i = 0; i < numGraphVertices; i++)
+        {
+            adjMatrix[i] = &(bytes[i*numGraphVertices]);
+            for(j = 0; j < numGraphVertices; j++)
+                adjMatrix[i][j] = 0;
+        }
+
+        for(i = 1; i < numNodes; i++)
+        {
+            //keys[0][i].idInMatrix = i;
+            adjMatrix[0][rankOffsetInMatrix[i]] = rankOffsetInMatrix[i]; 
+            adjMatrix[rankOffsetInMatrix[i] + numVertices[i] - numCollectives - 1][numVertices[0] - numCollectives- 1] = numVertices[i]; 
+            
+        }
+
+        for(j =0; j < numGraphVertices; j++)
+        {
+            for(k = 0; k < numGraphVertices; k++)
             {
-                printf("%s ",keys[i][j].key);
+                printf("%d ", adjMatrix[j][k]);
+                //if(strcmp(keys[i][j].opName, "MPI_Barrier") != 0)
+
             }
             printf("\n");
         }
+
     }   
-    printf("Rank %d exiting\n", myRank);
+    printf("\nRank %d exiting\n", myRank);
     _wrap_py_return_val = PMPI_Finalize();
     
     return _wrap_py_return_val;
