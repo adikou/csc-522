@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #ifndef _EXTERN_C_
 #ifdef __cplusplus
@@ -66,13 +67,27 @@ typedef struct vertexMetaData
     edgeMetaData interTreeEdge;
 } vertexMetaData;
 
+typedef struct graphVertex
+{
+    char *key;
+    int fromRank, toRank;
+    int tag, opSeq;
+    int weight;
+} graphVertex;
+
 int myRank, numNodes;
 FILE *fin, *fout;
 char *baseFileName = "tmp", *fileName;
 
 double startTime, endTime;
-int **opSeqCount;
+
+int **opSeqCount, totalOps = 0, *numVertices;
+graphVertex **keys;
+int **adjMatrix;
+
 char *lastParentKey;
+
+/* ================== End of Constants for MPI Operations ================== */
 
 int **allocateOpSeqCount()
 {
@@ -99,7 +114,8 @@ void initOpSeqCount()
             opSeqCount[i][j] = 0;
 }
 
-void generateKey(char *key, int op, int toRank, int tag, int opSeq)
+void generateKey(char *key, int op, int fromRank, int toRank, 
+                 int tag, int opSeq)
 {
     char *baseOp, *buf;
     switch(op)
@@ -119,19 +135,22 @@ void generateKey(char *key, int op, int toRank, int tag, int opSeq)
         case _MPI_FINALIZE_     : baseOp = "MPI_Finalize"; break;
     }
 
-    strcpy(key, baseOp); strcat(key, USCORE);
+    strcpy(key, baseOp); strncat(key, USCORE, sizeof(USCORE));
     buf = malloc(2);
-    sprintf(buf, "%d", myRank); strcat(key, buf); strcat(key, USCORE);    
-    sprintf(buf, "%d", toRank); strcat(key, buf); strcat(key, USCORE);
-    sprintf(buf, "%d", tag); strcat(key, buf); strcat(key, USCORE);
-    sprintf(buf, "%d", opSeq); strcat(key, buf);
+    sprintf(buf, "%d", fromRank); strncat(key, buf, sizeof(buf)); 
+    strncat(key, USCORE, sizeof(USCORE));    
+    sprintf(buf, "%d", toRank); strncat(key, buf, sizeof(buf)); 
+    strncat(key, USCORE, sizeof(USCORE));
+    sprintf(buf, "%d", tag); strncat(key, buf, sizeof(buf)); 
+    strncat(key, USCORE, sizeof(USCORE));
+    sprintf(buf, "%d", opSeq); strncat(key, buf, sizeof(buf));
 }
 
 void writeMetaData(int mpiOp, int fromRank, int toRank, int tag, 
                    int bytes, int opSeq)
 {
     vertexMetaData tmp;
-    char *buf;
+    char *buf, *bufStr;
 
     if(lastParentKey == NULL)
         lastParentKey = "NULL";
@@ -144,45 +163,114 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         if(myRank == 0)
                         {
                             tmp.key = malloc(30);
-                            generateKey(tmp.key, mpiOp, toRank, tag, opSeq);
+                            generateKey(tmp.key, mpiOp, fromRank, toRank, 
+                                        tag, opSeq);
                             lastParentKey = tmp.key;
                             printf("%s\n", tmp.key);
-                            fprintf(fout, tmp.key);
-                            fprintf(fout, "\n");
+                            fprintf(fout, "%s", tmp.key);
+                            fprintf(fout, "%s","\n");
                         }
                         fclose(fout);
 
                         break;
-        case _MPI_SEND_ : case _MPI_ISEND_ :
+        case _MPI_SEND_ : 
                         fout = fopen(fileName, "a");
                         endTime = MPI_Wtime();
                         tmp.inTreeParent = lastParentKey;
 
                         tmp.interTreeParent = NULL;
                         tmp.key = malloc(50);
-                        generateKey(tmp.key, mpiOp, toRank, tag, opSeq);
+                        generateKey(tmp.key, mpiOp, fromRank, 
+                                    toRank, tag, opSeq);
                         lastParentKey = tmp.key;
-                        fprintf(fout, tmp.key);
-                        fprintf(fout, "\t");
-                        fprintf(fout, tmp.inTreeParent);
-                        fprintf(fout, "\t");
+                        fprintf(fout, "%s", tmp.key);
+                        fprintf(fout, "%s", "\t");
+                        fprintf(fout, "%s", tmp.inTreeParent);
+                        fprintf(fout, "%s", "\t");
                         buf = malloc(10);
-                        sprintf(buf, "%lf", endTime - startTime);
-                        fprintf(fout, buf);
-                        fprintf(fout, "\t");
+                        sprintf(buf, "%d", (int)round(endTime - startTime));
+                        fprintf(fout, "%s", buf);
+                        fprintf(fout, "%s", "\t");
                         sprintf(buf, "%d", 0);
-                        fprintf(fout, buf);
-                        fprintf(fout, "\t");
+                        fprintf(fout, "%s", buf);
+                        fprintf(fout, "%s", "\t");
                         sprintf(buf, "%d", bytes);
-                        fprintf(fout, buf);
-                        fprintf(fout, "\n");
+                        fprintf(fout, "%s", buf);
+                        fprintf(fout, "%s", "\n");
 
                         fclose(fout);
                         startTime = MPI_Wtime();
                         break;
-        case _MPI_RECV_         : break;
-        case _MPI_IRECV_        : break;
-        case _MPI_BARRIER_      : break;
+        case _MPI_ISEND_ : break;
+        case _MPI_RECV_ : 
+                        fout = fopen(fileName, "a");
+                        endTime = MPI_Wtime();
+                        tmp.inTreeParent = lastParentKey;
+
+                        tmp.interTreeParent = malloc(50);
+                        tmp.key = malloc(50);
+                        generateKey(tmp.key, mpiOp, toRank, 
+                                    fromRank, tag, opSeq);
+                        lastParentKey = tmp.key;
+                        fprintf(fout, "%s", tmp.key);
+                        fprintf(fout, "%s", "\t");
+                        fprintf(fout, "%s", tmp.inTreeParent);
+                        fprintf(fout, "%s", "\t");
+                        generateKey(tmp.interTreeParent, _MPI_SEND_, toRank, 
+                                    fromRank, tag, opSeq);
+                        fprintf(fout, "%s", tmp.interTreeParent);
+                        fprintf(fout, "%s", "\t");
+                        buf = malloc(10);
+                        sprintf(buf, "%d", (int)round(endTime - startTime));
+                        fprintf(fout, "%s", buf);
+                        fprintf(fout, "%s", "\n");
+
+                        fclose(fout);
+                        startTime = MPI_Wtime();
+ 
+                        break;
+        case _MPI_IRECV_ : 
+                        fout = fopen(fileName, "a");
+                        endTime = MPI_Wtime();
+                        tmp.inTreeParent = lastParentKey;
+
+                        tmp.interTreeParent = malloc(50);
+                        tmp.key = malloc(50);
+                        generateKey(tmp.key, mpiOp, toRank, 
+                                    fromRank, tag, opSeq);
+                        lastParentKey = tmp.key;
+                        fprintf(fout, "%s", tmp.key);
+                        fprintf(fout, "%s", "\t");
+                        fprintf(fout, "%s", tmp.inTreeParent);
+                        fprintf(fout, "%s", "\t");
+                        generateKey(tmp.interTreeParent, _MPI_ISEND_, toRank, 
+                                    fromRank, tag, opSeq);
+                        fprintf(fout, "%s", tmp.interTreeParent);
+                        fprintf(fout, "\t");
+                        buf = malloc(10);
+                        sprintf(buf, "%d", (int)round(endTime - startTime));
+                        fprintf(fout, "%s", buf);
+                        fprintf(fout, "%s", "\n");
+
+                        fclose(fout);
+                        startTime = MPI_Wtime();
+                        break;
+        case _MPI_BARRIER_ : 
+                        fout = fopen(fileName, "a");
+                        tmp.inTreeParent = lastParentKey;
+
+                        tmp.key = malloc(50);
+                        generateKey(tmp.key, mpiOp, fromRank, 
+                                    toRank, tag, opSeq);
+                        lastParentKey = tmp.key;
+                        fprintf(fout, "%s", tmp.key);
+                        fprintf(fout, "\t");
+                        fprintf(fout, "%s", tmp.inTreeParent);
+                        fprintf(fout, "%s","\n");
+
+                        fclose(fout);
+                        startTime = MPI_Wtime();
+                        break;
         case _MPI_SCATTER_      : break;
         case _MPI_GATHER_       : break;
         case _MPI_ALLREDUCE_    : break;
@@ -190,19 +278,27 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
         case _MPI_WAITALL_      : break;
         case _MPI_ALLTOALL_     : break;
         case _MPI_FINALIZE_ : 
+                        fout = fopen(fileName, "a");
                         if(myRank == 0)
                         {
-                            fout = fopen(fileName, "a");
                             startTime = MPI_Wtime();
                             tmp.key = malloc(30);
-                            generateKey(tmp.key, mpiOp, toRank, tag, opSeq);
+                            generateKey(tmp.key, mpiOp, fromRank, 
+                                        toRank, tag, opSeq);
+
                             lastParentKey = tmp.key;
                             printf("%s\n", lastParentKey);
-                            fprintf(fout, tmp.key);
+                            fprintf(fout, "%s", tmp.key);
                             fprintf(fout, "\n");
-                            fclose(fout);
                         }
-                            break;
+                        buf = malloc(10); 
+                        sprintf(buf, "%d", totalOps);
+                        bufStr = malloc(strlen("totalOps=") + strlen(buf) + 1);
+                        bufStr = "totalOps=";
+                        fprintf(fout, "%s", bufStr);
+                        fprintf(fout, "%s", buf);
+                        fclose(fout);
+                        break;
     }
 
 }
@@ -212,10 +308,16 @@ _EXTERN_C_ int PMPI_Barrier(MPI_Comm arg_0);
 _EXTERN_C_ int MPI_Barrier(MPI_Comm arg_0) 
 { 
     int _wrap_py_return_val = 0;
- 
+    totalOps++;
+    
+    writeMetaData(_MPI_BARRIER_, 0, 0, -1, 0, 
+                  ++opSeqCount[_MPI_BARRIER_][myRank]); 
   {
     _wrap_py_return_val = PMPI_Barrier(arg_0);
   }
+
+    
+
     return _wrap_py_return_val;
 }
 
@@ -311,11 +413,12 @@ _EXTERN_C_ int MPI_Send(void *buf, int count, MPI_Datatype datatype, int dest,
                          int tag, MPI_Comm comm) 
 { 
     int _wrap_py_return_val = 0;
-    writeMetaData(_MPI_SEND_, myRank, dest, tag, count, 
-                  ++opSeqCount[_MPI_SEND_][dest]);
+    totalOps++;
     {
       _wrap_py_return_val = PMPI_Send(buf, count, datatype, dest, tag, comm);
     }
+    writeMetaData(_MPI_SEND_, myRank, dest, tag, count, 
+                  ++opSeqCount[_MPI_SEND_][dest]);
     return _wrap_py_return_val;
 }
 
@@ -337,16 +440,18 @@ _EXTERN_C_ int MPI_Isend(void *arg_0, int arg_1, MPI_Datatype arg_2,
 }
 
 /* ================== C Wrappers for MPI_Recv ================== */
-_EXTERN_C_ int PMPI_Recv(void *arg_0, int arg_1, MPI_Datatype arg_2, int arg_3,
-                         int arg_4, MPI_Comm arg_5, MPI_Status *arg_6);
-_EXTERN_C_ int MPI_Recv(void *arg_0, int arg_1, MPI_Datatype arg_2, int arg_3,
-                        int arg_4, MPI_Comm arg_5, MPI_Status *arg_6) 
+_EXTERN_C_ int PMPI_Recv(void *buf, int count, MPI_Datatype datatype, int dest, 
+                         int tag, MPI_Comm comm, MPI_Status *status);
+_EXTERN_C_ int MPI_Recv(void *buf, int count, MPI_Datatype datatype, int dest, 
+                         int tag, MPI_Comm comm, MPI_Status *status) 
 { 
     int _wrap_py_return_val = 0;
- 
+    totalOps++;
+    writeMetaData(_MPI_RECV_, myRank, dest, tag, count, 
+                  ++opSeqCount[_MPI_RECV_][dest]);
     {
-      _wrap_py_return_val = PMPI_Recv(arg_0, arg_1, arg_2, arg_3, arg_4, 
-                                      arg_5, arg_6);
+      _wrap_py_return_val = PMPI_Recv(buf, count, datatype, dest, tag, 
+                                      comm, status);
     }
     return _wrap_py_return_val;
 }
@@ -396,8 +501,9 @@ _EXTERN_C_ int MPI_Init(int *argc, char ***argv)
 { 
     int _wrap_py_return_val = 0;
     char *buf;
+    int i, j;
 
-    fileName = malloc(strlen(baseFileName) + 1);
+    fileName = malloc(strlen(baseFileName) + 4);
     buf = malloc(2);
 
     strcpy(fileName, baseFileName);
@@ -409,10 +515,18 @@ _EXTERN_C_ int MPI_Init(int *argc, char ***argv)
 
     MPI_Comm_rank(MPI_COMM_WORLD, &myRank); 
     MPI_Comm_size(MPI_COMM_WORLD, &numNodes);
-    sprintf(buf, "%d", myRank); strcat(fileName, buf);
-    strcat(fileName, ".txt");
+
+    sprintf(buf, "%d", myRank); strncat(fileName, buf, sizeof(buf));
+    strncat(fileName, ".txt", 4);
     writeMetaData(_MPI_INIT_, myRank, myRank, -1, 0, 0);
-    printf("%s\n", fileName);
+
+    if(myRank == 0)
+    {
+        totalOps++;
+        numVertices = (int*) malloc(numNodes * sizeof(int));
+        keys = (graphVertex**) malloc (numNodes * sizeof(graphVertex*));
+    }
+
     return _wrap_py_return_val;
 }
 
@@ -421,9 +535,81 @@ _EXTERN_C_ int PMPI_Finalize();
 _EXTERN_C_ int MPI_Finalize() 
 { 
     int _wrap_py_return_val = 0;
+    char *buf = malloc(5), *tmpFileName;
+    char ch, *bufKey, *line = NULL;
+    ssize_t read; 
+    size_t len = 0;
+    int t = 0;
+    int countTillEquals = 0, i, j, k, totalVerticesSoFar = 0;
+    int m,n;
+    FILE *fp; 
+    graphVertex *vals = NULL;
+
+    if(myRank == 0)
+        totalOps++;
+
     writeMetaData(_MPI_FINALIZE_, myRank, myRank, -1, 0, 0);
+    printf("Rank %d is here\n", myRank);
+    PMPI_Barrier(MPI_COMM_WORLD);
+    bufKey = (char*)malloc(50);
+    if(myRank == 0)
     {
-      _wrap_py_return_val = PMPI_Finalize();
-    }
+        for(i = 0; i < numNodes; i++)
+        {
+            tmpFileName = malloc(strlen("tmp") + 5);
+            strcpy(tmpFileName, "tmp");
+            sprintf(buf, "%d", i); strncat(tmpFileName, buf, sizeof(buf));
+            strncat(tmpFileName, ".txt", sizeof(".txt"));      
+
+            fin = fopen(tmpFileName, "r");
+            fseek(fin, -1, SEEK_END);
+            countTillEquals = 0;
+            ch = fgetc(fin);
+            while(ch != '=')
+            {
+                fseek(fin, -2, SEEK_CUR);
+                ch = fgetc(fin);
+                countTillEquals++;
+            }
+
+            for(j = 0; j < countTillEquals; j++)
+                buf[j] = fgetc(fin);
+            buf[j] = '\0';
+            
+            numVertices[i] = atoi(buf);
+            totalVerticesSoFar += numVertices[i];
+            keys[i] = (graphVertex*)realloc(vals, numVertices[i] * sizeof(graphVertex));
+
+            fclose(fin);
+            fin = fopen(tmpFileName, "r");
+            
+            for(j = 0; j < numVertices[i]; j++)
+            {
+                keys[i][j].key = NULL;
+                read = getline(&line, &len, fin);
+                if(read != -1)
+                {
+                    bufKey = strtok(line, "\t\n");
+                    keys[i][j].key = (char*)malloc(strlen(bufKey) + 1);
+                    strcpy(keys[i][j].key, bufKey);
+                    printf("%d %s\n", (int)strlen(keys[i][j].key), keys[i][j].key);
+                }
+            }
+            fclose(fin);
+        }
+
+        for (i = 0; i < numNodes; i++)
+        {
+            printf("%d ",numVertices[i]);
+            for (j = 0; j < numVertices[i]; j++)
+            {
+                printf("%s ",keys[i][j].key);
+            }
+            printf("\n");
+        }
+    }   
+    printf("Rank %d exiting\n", myRank);
+    _wrap_py_return_val = PMPI_Finalize();
+    
     return _wrap_py_return_val;
 }
