@@ -67,13 +67,15 @@ typedef struct vertexMetaData
 
 typedef struct adjList
 {
+    int src;
     int dest;
     long int weight;
     long int bytes;
     struct adjList* next;
 } adjList;
  
- 
+adjList *path = NULL;
+
 adjList* newAdjListNode(int dest, long int weight, long int bytes)
 {
     adjList* new = (adjList*) malloc(sizeof(adjList));
@@ -133,6 +135,7 @@ graph* createGraph(int numGraphVertices)
 void addEdge(graph* Graph, int src, int dest, long int weight, long int bytes)
 {
     adjList* new = newAdjListNode(dest, weight, bytes);
+    new->src = src;
     new->next = Graph->vertexListArray[src].root;
     Graph->vertexListArray[src].root = new; 
 }
@@ -164,6 +167,9 @@ int **opSeqCount, totalOps = 0, *numVertices, numCollectives = 0;
 graphVertex **keys;
 graph *Graph;
 int numGraphVertices, *rankOffsetInMatrix;
+
+long int *distTo;
+adjList **edgeTo;
 
 char *lastParentKey;
 
@@ -400,6 +406,14 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
 
 }
 
+void push(adjList *edge)
+{
+    adjList *new = (adjList*)malloc(sizeof(adjList));
+    memcpy(new, edge, sizeof(adjList));
+    new->next = path;
+    path = new;
+}
+
 void insertVertex(int vertex)
 {
     struct llist *new = (struct llist*)malloc(sizeof(struct llist));
@@ -452,6 +466,73 @@ void DFS(graph *Graph)
             DFS_visit(Graph, &(Graph->vertexListArray[i]));
     }
 
+}
+
+void relax(graph* Graph, adjList *e)
+{
+    int v , w;
+    printf("\nIn relax src%d dest%d", e->src, e->dest);
+    v = e->src; w = e->dest;
+    printf("\nd[w]%ld d[v]+w[e]%ld", distTo[w], distTo[v] + e->weight);
+    if(distTo[w] < distTo[v] + e->weight)
+    {
+        printf("\n%d->%d Enters here", e->src, e->dest);
+        distTo[w] = distTo[v] + e->weight;
+        edgeTo[w] = e;
+    }
+}
+
+void longestPathInGraph(graph *Graph)
+{
+    int i;
+    struct llist *cur = root;
+    adjList *e; 
+    
+    distTo = (long int*)malloc(Graph->numGraphVertices * sizeof(long int));
+    edgeTo = (struct adjList**)malloc(Graph->numGraphVertices * sizeof(struct adjList*));
+
+    for(i = 0; i < Graph->numGraphVertices; ++i)
+    {
+        distTo[i] = (long int)-INFINITY;
+        edgeTo[i] = NULL;
+    }
+
+    distTo[0] = 0;
+    // cur is for topological ordering of G
+    while(cur)
+    {
+        // e is for adjList of cur->vertex
+        e = Graph->vertexListArray[cur->vertex].root;
+        while(e)
+        {
+            printf("\n%d -> %d %s %ld %ld weight%ld", e->src, 
+                   e->dest, Graph->vertexListArray[e->dest].key, 
+                   distTo[e->src],
+                   distTo[e->dest],
+                   e->weight);
+            relax(Graph, e);
+             printf("\n%d -> %d %s %ld %ld weight %ld", e->src, 
+                   e->dest, Graph->vertexListArray[e->dest].key, 
+                   distTo[e->src],
+                   distTo[e->dest],
+                   e->weight);
+            e = e->next;
+        }
+        //Done with this vertex
+        cur = cur->next;
+
+    }
+
+    for(e = edgeTo[rankOffsetInMatrix[1]-1]; e != NULL; e = edgeTo[e->src])
+        push(e);
+
+    e  = path;
+    while(e)
+    {
+        printf("\n%d->%d weight%ld", e->src, e->dest, e->weight);
+        e = e->next;
+    }
+    printf("\n");
 }
 
 
@@ -535,24 +616,24 @@ void fillDotGraph(graph *Graph)
         adjList *cur = Graph->vertexListArray[i].root;
         while (cur)
         {
-            if((strcmp(Graph->vertexListArray[i].opName, "MPI_Send")== 0)
-                || (strcmp(Graph->vertexListArray[i].opName, "MPI_Isend")== 0))
+            if((strcmp(Graph->vertexListArray[cur->src].opName, "MPI_Send")== 0)
+                || (strcmp(Graph->vertexListArray[cur->src].opName, "MPI_Isend")== 0))
             {   
                 if(cur->next == NULL)
                 {
-                    sprintf(buf, "%d->%d [label=\"%ld(%ld)\"]", i, cur->dest, 
+                    sprintf(buf, "%d->%d [label=\"%ld(%ld)\"]", cur->src, cur->dest, 
                         cur->weight, cur->bytes);
                     fprintf(fout, "%s\n", buf);
                 }
                 else
                 {
-                    sprintf(buf, "%d->%d [label=\"%ld\"]", i, cur->dest, cur->weight);
+                    sprintf(buf, "%d->%d [label=\"%ld\"]", cur->src, cur->dest, cur->weight);
                     fprintf(fout, "%s\n", buf);
                 }
             }
             else
             {
-                sprintf(buf, "%d->%d [label=\"%ld\"]", i, cur->dest, cur->weight);
+                sprintf(buf, "%d->%d [label=\"%ld\"]", cur->src, cur->dest, cur->weight);
                 fprintf(fout, "%s\n", buf);
             }
             cur = cur->next;
@@ -809,7 +890,8 @@ _EXTERN_C_ int MPI_Finalize()
     char ch, *bufKey, *line = NULL, *bufLine = NULL;
     ssize_t read; 
     size_t len = 0;
-    int idInMatrix;
+    int idInMatrix, u;
+    adjList *v;
     int countTillEquals = 0, i, j, k, t, totalVerticesSoFar = 0;
     int firstNode, lastNode;
     FILE *fp; 
@@ -909,11 +991,7 @@ _EXTERN_C_ int MPI_Finalize()
 
         for(i = 0; i < numNodes; i++)
         {
-            //Link all Init nodes to span-n ranks and n-ranks to Finalize
-            //if(i)
-            //addEdge(Graph, rankOffsetInMatrix[i+1] - 1, numVertices[0] - 1, 1);
 
-            //Connect all edges in one thread of one rank
             for(k = 0; k < numVertices[i]; k++)
             {
                 if(i == 0)
@@ -1011,8 +1089,8 @@ _EXTERN_C_ int MPI_Finalize()
 
                 else addEdge(Graph, rankOffsetInMatrix[i+1] - 1, 
                             numVertices[0] -1, keys[0][numVertices[0]-1].inTreeWeight, 0);
-                addEdge(Graph, rankOffsetInMatrix[i+1] - 1, numVertices[0] - 1, 
-                        keys[0][numVertices[0]-1].inTreeWeight, 0);
+                //addEdge(Graph, rankOffsetInMatrix[i+1] - 1, numVertices[0] - 1, 
+                        //keys[0][numVertices[0]-1].inTreeWeight, 0);
             }
         }  
         printGraph(Graph);
@@ -1024,7 +1102,38 @@ _EXTERN_C_ int MPI_Finalize()
             printf("%d->", cur->vertex);
             cur = cur->next;
         }
+        printf("\n");
+        longestPathInGraph(Graph);
+        printf("Weight of finalize %d %s %ld\n", Graph->vertexListArray[rankOffsetInMatrix[1]-1].id,
+                Graph->vertexListArray[rankOffsetInMatrix[1]-1].key,
+                distTo[rankOffsetInMatrix[1]-1]);
+        u = 0;
+        cur = root;
+        while(cur)
+        {
+            i = cur->vertex;
+            printf("disTo i%d %ld\n",i,distTo[i] );
+            cur = cur->next;
+        }
+        /*while(cur)
+        {
+            u = cur->vertex;
+            v = edgeTo[u]; 
+            if(v != NULL)
+                printf("i%d nextInPath %d\n",u,  Graph->vertexListArray[v->dest].id);
+            else
+                printf("i%d nextInPath %p\n",u, v);
+            //if(v == NULL)
+                //break;
+            //printf("\nid%d %s %ld", Graph->vertexListArray[u].id,
+                    //Graph->vertexListArray[u].key,
+                    //Graph->vertexListArray[u].distTo);
+            cur = cur->next;
+            //v = Graph->vertexListArray[v->src].nextInPath;
+        }*/
+
         fillDotGraph(Graph);    
+        printGraph(Graph);
         k = system("mv dotGraph.txt dotGraph.dot");
         //k = system("dot -Tpng -oCritPathGraph.png dotGraph.dot");  
         //printf("Res %d\n", k);
