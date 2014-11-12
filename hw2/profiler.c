@@ -61,9 +61,24 @@ char* collectives[_NUM_COLLECTIVES_] = {"MPI_Barrier", "MPI_Scatter",
                                         "MPI_Gather" , "MPI_Reduce", 
                                         "MPI_Alltoall","MPI_Allreduce"};
 
+char* mpiOpNames[_NUM_MPI_OPS_] = {"MPI_Init", "MPI_Send", "MPI_Recv",
+                                   "MPI_Isend", "MPI_Irecv", "MPI_Barrier",
+                                   "MPI_Scatter", "MPI_Gather", "MPI_Reduce",
+                                   "MPI_Allreduce", "MPI_Wait", "MPI_Waitall",
+                                   "MPI_Alltoall", "MPI_Finalize"};
+
 #define WHITE 0
 #define GRAY  1
 #define BLACK 2
+
+typedef struct times
+{
+    int t;
+    struct times *next;
+}times;
+
+times *mpiOpTimes[_NUM_MPI_OPS_];
+int stats[_NUM_MPI_OPS_][5];
 
 typedef struct vertexMetaData
 {
@@ -121,6 +136,14 @@ struct llist
     struct llist *next;
 }*root = NULL, *front = NULL, *rear = NULL;
 
+void insert(times **timeroot, int t)
+{
+    times *new = (times*)malloc(sizeof(times));
+    new->t = t;
+    new->next = *timeroot;
+    *timeroot = new;
+}
+
 graph* createGraph(int numGraphVertices)
 {
     int i;
@@ -170,7 +193,7 @@ int myRank, numNodes;
 FILE *fin, *fout;
 char *baseFileName = "tmp", *fileName;
 
-double startTime, endTime, discoveryTime;
+double startTime, endTime, discoveryTime, stime, etime;
 
 int **opSeqCount, totalOps = 0, *numVertices, numCollectives = 0;
 graphVertex **keys;
@@ -381,7 +404,23 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         startTime = MPI_Wtime();
                         break;
         
-        case _MPI_WAIT_         : break;
+        case _MPI_WAIT_         : 
+                        fout = fopen(fileName, "a");
+                        endTime = MPI_Wtime();
+                        tmp.key = malloc(50);
+                        generateKey(tmp.key, mpiOp, fromRank, 
+                                    toRank, tag, opSeq);
+                        fprintf(fout, "%s", tmp.key);
+                        fprintf(fout, "%s", FOUR_SPACES);   
+                        buf = malloc(10);
+                        sprintf(buf, "%d", (int)round((endTime - startTime)*1000));
+                        fprintf(fout, "%s", buf);
+                        fprintf(fout, "%s", FOUR_SPACES);
+                        fprintf(fout, "%s", "\n");
+                        
+                        fclose(fout);
+                        startTime = MPI_Wtime();
+                        break;
         case _MPI_WAITALL_      : break;
         
         case _MPI_FINALIZE_ : 
@@ -690,7 +729,7 @@ void writeToCritPathOut(graph *Graph)
     FILE *fout;
 
     buf = (char*)malloc(100);
-    fout = fopen("critPath.txt", "w");
+    fout = fopen("critPath.out", "w");
     for(i = 0; i < pathLength; ++i)
     {
         if(isCollective(Graph->vertexListArray[criticalPath[i].src].opName)
@@ -710,6 +749,23 @@ void writeToCritPathOut(graph *Graph)
             sprintf(buf, "%ld", criticalPath[i].bytes);
             fprintf(fout, "%s\n", buf);   
         }
+        else if((strcmp(Graph->vertexListArray[criticalPath[i].src].opName, "MPI_Recv")== 0)
+                ||(strcmp(Graph->vertexListArray[criticalPath[i].src].opName, "MPI_Irecv")== 0))
+        {
+            sprintf(buf, "%s %d", Graph->vertexListArray[criticalPath[i].src].opName,
+                    Graph->vertexListArray[criticalPath[i].src].toRank);
+            fprintf(fout, "%s\n", buf);
+            sprintf(buf, "%ld", criticalPath[i].weight);
+            fprintf(fout, "%s\n", buf);   
+        }
+        else
+        {
+            sprintf(buf, "%s %d", Graph->vertexListArray[criticalPath[i].src].opName,
+                    Graph->vertexListArray[criticalPath[i].src].fromRank);
+            fprintf(fout, "%s\n", buf);
+            sprintf(buf, "%ld", criticalPath[i].weight);
+            fprintf(fout, "%s\n", buf);       
+        }
         if(strcmp(Graph->vertexListArray[criticalPath[i].dest].opName, "MPI_Finalize")== 0)
         {
             sprintf(buf, "%s -1", Graph->vertexListArray[criticalPath[i].dest].opName);
@@ -718,7 +774,175 @@ void writeToCritPathOut(graph *Graph)
     }
 
     fclose(fout);
-    system("mv critPath.txt critPath.out");
+}
+
+int partition(int* A, int p, int r)
+{
+    int i, x, j, tmp;
+    x = A[r];
+    i = p-1;
+    for(j = p; j < r; j++)
+    {
+        if(A[j] <= x)
+        {
+            i = i + 1;
+            tmp = A[i];
+            A[i] = A[j];
+            A[j] = tmp;
+        }
+    }
+    tmp = A[i+1];
+    A[i+1] = A[r];
+    A[r] = tmp;
+
+    return i+1;
+}
+
+void quicksort(int* A, int p, int r)
+{
+    int i,q;
+    if(p < r)
+    {
+        q = partition(A, p, r);
+        quicksort(A, p, q-1);
+        quicksort(A, q+1, r);
+    }
+}
+void writeToStatsDat()
+{
+    int i,j,k, count, sum;
+    char *timeFile, *buf, *tmpFileName, *line = NULL, *bufLine = NULL;
+    char *bufToken = NULL;
+    ssize_t read; 
+    size_t len = 0;
+    int *timeVals[_NUM_MPI_OPS_], index[_NUM_MPI_OPS_];
+
+    times *curt;
+    buf = (char*)malloc(20);
+    timeFile = (char*)malloc(strlen("time") + 5);
+    strcpy(timeFile, "time");
+    sprintf(buf, "%d", myRank); strncat(timeFile, buf, sizeof(buf));
+    strncat(timeFile, ".txt", sizeof(".txt"));
+
+    fout = fopen(timeFile, "w");
+
+    for(k = 0; k < _NUM_MPI_OPS_; ++k)
+    {
+        curt = mpiOpTimes[k];
+        sprintf(buf, "%s ", mpiOpNames[k]);
+        fprintf(fout, "%s", buf);
+        while(curt)
+        {
+            if(curt->next != NULL)
+            {
+                sprintf(buf, "%d ", curt->t);
+                fprintf(fout, "%s", buf);
+            }
+            else
+            {
+                sprintf(buf, "%d", curt->t);
+                fprintf(fout, "%s", buf);   
+            }
+            curt = curt->next;
+        }
+        
+        if(k != _NUM_MPI_OPS_ - 1)
+        {
+            sprintf(buf, "%s", "\n");
+            fprintf(fout, "%s", buf);
+        }
+    }
+
+    fclose(fout);
+
+    if(myRank == 0)
+    {
+        fout = fopen("stats.dat", "w");
+        for(i = 0; i < numNodes; i++)
+        {
+            tmpFileName = malloc(strlen("time") + 5);
+            strcpy(tmpFileName, "time");
+            sprintf(buf, "%d", i); strncat(tmpFileName, buf, sizeof(buf));
+            strncat(tmpFileName, ".txt", sizeof(".txt"));      
+            fin = fopen(tmpFileName, "r");
+            for(k = 0; k < _NUM_MPI_OPS_; k++)
+            {
+                read = getline(&line, &len, fin);
+                bufLine = (char*)malloc(strlen(line)+1);
+                strcpy(bufLine, line);
+                bufToken = strtok(bufLine, " \n");
+                bufToken = strtok(NULL, " \n");
+                while(bufToken)
+                {
+                    stats[k][0]++;
+                    bufToken = strtok(NULL, " \n");
+                }
+
+                index[k] = 0;
+                if(stats[k][0] > 0)
+                    timeVals[k] = (int*)malloc(stats[k][0] * sizeof(int));
+            }
+            fclose(fin);
+        }
+
+        for(i = 0; i < numNodes; ++i)
+        {
+            tmpFileName = malloc(strlen("time") + 5);
+            strcpy(tmpFileName, "time");
+            sprintf(buf, "%d", i); strncat(tmpFileName, buf, sizeof(buf));
+            strncat(tmpFileName, ".txt", sizeof(".txt"));      
+            fin = fopen(tmpFileName, "r");
+            for(k = 0; k < _NUM_MPI_OPS_; k++)
+            {
+                read = getline(&line, &len, fin);
+                bufLine = (char*)malloc(strlen(line)+1);
+                strcpy(bufLine, line);
+                bufToken = strtok(bufLine, " \n");
+                bufToken = strtok(NULL, " \n");
+                while(bufToken)
+                {
+                    timeVals[k][index[k]] = atoi(bufToken);
+                    bufToken = strtok(NULL, " \n");
+                    ++index[k];
+                }
+            }
+            fclose(fin);
+        }
+
+        for(i = 0; i < _NUM_MPI_OPS_; ++i)
+            quicksort(timeVals[i], 0, stats[i][0]-1);
+       
+        for(i = 0 ; i < _NUM_MPI_OPS_; ++i)
+            if(stats[i][0] > 0)
+            {
+                stats[i][2] = timeVals[i][0];
+                stats[i][3] = timeVals[i][stats[i][0]/2];
+                stats[i][4] = timeVals[i][stats[i][0]-1];
+                sum = 0;
+                for(j = 0; j < stats[i][0]; j++)
+                    sum += timeVals[i][j];
+                stats[i][1] = sum/stats[i][0];
+            }
+        
+        sprintf(buf, "Function\tInvocations\tMean\tMin\tMedian\tMax\n");
+        fprintf(fout, "%s", buf);
+
+        for(i = 0; i < _NUM_MPI_OPS_-1; i++)
+        {
+            sprintf(buf, "%s\t", mpiOpNames[i]);
+            fprintf(fout, "%s", buf);
+            for(j = 0; j < 5; ++j)
+            {
+                sprintf(buf, "%d\t", stats[i][j]);
+                fprintf(fout, "%s", buf);
+            }
+            sprintf(buf, "\n");
+            fprintf(fout, "%s", buf);
+        }
+        fclose(fout);
+    }
+
+    //system("rm time*");
 }
 
 /* ================== C Wrappers for MPI_Barrier ================== */
@@ -731,11 +955,11 @@ _EXTERN_C_ int MPI_Barrier(MPI_Comm arg_0)
     writeMetaData(_MPI_BARRIER_, 0, 0, -1, 0, 0,
                   ++opSeqCount[_MPI_BARRIER_][myRank]); 
   {
+    stime = MPI_Wtime();
     _wrap_py_return_val = PMPI_Barrier(arg_0);
+    etime = MPI_Wtime();
+    insert(&mpiOpTimes[_MPI_BARRIER_], (int)round((etime - stime)*1000));
   }
-
-    
-
     return _wrap_py_return_val;
 }
 
@@ -753,8 +977,11 @@ _EXTERN_C_ int MPI_Alltoall(void *arg_0, int arg_1, MPI_Datatype arg_2,
     writeMetaData(_MPI_ALLTOALL_, 0, 0, -1, 0, 0,
                   ++opSeqCount[_MPI_ALLTOALL_][myRank]); 
   {
+    stime = MPI_Wtime();
     _wrap_py_return_val = PMPI_Alltoall(arg_0, arg_1, arg_2, arg_3, arg_4, 
                                         arg_5, arg_6);
+    etime = MPI_Wtime();
+    insert(&mpiOpTimes[_MPI_ALLTOALL_], (int)round((etime - stime)*1000));
   }
     return _wrap_py_return_val;
 }
@@ -773,8 +1000,11 @@ _EXTERN_C_ int MPI_Scatter(void *arg_0, int arg_1, MPI_Datatype arg_2,
     writeMetaData(_MPI_SCATTER_, 0, 0, -1, 0, 0,
                   ++opSeqCount[_MPI_SCATTER_][myRank]); 
     {
+        stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Scatter(arg_0, arg_1, arg_2, arg_3, arg_4, 
                                          arg_5, arg_6, arg_7);
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_SCATTER_], (int)round((etime - stime)*1000));
     }
     return _wrap_py_return_val;
 }
@@ -794,8 +1024,11 @@ _EXTERN_C_ int MPI_Gather(void *arg_0, int arg_1, MPI_Datatype arg_2,
                   ++opSeqCount[_MPI_GATHER_][myRank]); 
  
     {
+        stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Gather(arg_0, arg_1, arg_2, arg_3, arg_4, 
                                         arg_5, arg_6, arg_7);
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_GATHER_], (int)round((etime - stime)*1000));
     }
     return _wrap_py_return_val;
 }
@@ -814,8 +1047,11 @@ _EXTERN_C_ int MPI_Reduce(void *arg_0, void *arg_1, int arg_2,
     writeMetaData(_MPI_REDUCE_, 0, 0, -1, 0, 0,
                   ++opSeqCount[_MPI_REDUCE_][myRank]); 
     {
+        stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Reduce(arg_0, arg_1, arg_2, arg_3, arg_4, 
                                         arg_5, arg_6);
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_REDUCE_], (int)round((etime - stime)*1000));
     }
     return _wrap_py_return_val;
 }
@@ -834,8 +1070,11 @@ _EXTERN_C_ int MPI_Allreduce(void *arg_0, void *arg_1, int arg_2,
     writeMetaData(_MPI_ALLREDUCE_, 0, 0, -1, 0, 0,
                   ++opSeqCount[_MPI_ALLREDUCE_][myRank]); 
     {
+        stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Allreduce(arg_0, arg_1, arg_2, arg_3, 
                                            arg_4, arg_5);
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_ALLREDUCE_], (int)round((etime - stime)*1000));
     }
     return _wrap_py_return_val;
 }
@@ -851,7 +1090,10 @@ _EXTERN_C_ int MPI_Send(void *buf, int count, MPI_Datatype datatype, int dest,
     latency = (0.000000291935 * count *sizeof(datatype)) + 0.000598493;
     totalOps++;
     {
+        stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Send(buf, count, datatype, dest, tag, comm);
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_SEND_], (int)round((etime - stime)*1000));
     }
     writeMetaData(_MPI_SEND_, myRank, dest, tag, count, latency, 
                   ++opSeqCount[_MPI_SEND_][dest]);
@@ -869,7 +1111,10 @@ _EXTERN_C_ int MPI_Isend(void *buf, int count, MPI_Datatype datatype, int dest,
     latency = (0.000000291935 * count *sizeof(datatype)) + 0.000598493;
     totalOps++;
     {
+        stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Isend(buf, count, datatype, dest, tag, comm, request);
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_ISEND_], (int)round((etime - stime)*1000));
     }
     writeMetaData(_MPI_ISEND_, myRank, dest, tag, count, latency, 
                   ++opSeqCount[_MPI_ISEND_][dest]);
@@ -888,8 +1133,11 @@ _EXTERN_C_ int MPI_Recv(void *buf, int count, MPI_Datatype datatype, int dest,
     writeMetaData(_MPI_RECV_, myRank, dest, tag, count,0, 
                   ++opSeqCount[_MPI_RECV_][dest]);
     {
+        stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Recv(buf, count, datatype, dest, tag, 
                                       comm, status);
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_RECV_], (int)round((etime - stime)*1000));
     }
     return _wrap_py_return_val;
 }
@@ -907,8 +1155,11 @@ _EXTERN_C_  int MPI_Irecv(void *buf, int count, MPI_Datatype datatype, int sourc
     writeMetaData(_MPI_IRECV_, myRank, source, tag, count,0, 
                   ++opSeqCount[_MPI_IRECV_][source]);
     {
+        stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Irecv(buf, count, datatype, source, tag, 
                                       comm, request);
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_IRECV_], (int)round((etime - stime)*1000));
     }
     return _wrap_py_return_val;
 }
@@ -917,21 +1168,38 @@ _EXTERN_C_ int PMPI_Wait(MPI_Request *arg_0, MPI_Status *arg_1);
 _EXTERN_C_ int MPI_Wait(MPI_Request *arg_0, MPI_Status *arg_1) 
 { 
     int _wrap_py_return_val = 0;
+    totalOps++;
+    
+    writeMetaData(_MPI_WAIT_, 0, 0, -1, 0, 0,
+                  ++opSeqCount[_MPI_WAIT_][myRank]); 
  
     {
+        stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Wait(arg_0, arg_1);
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_WAIT_], (int)round((etime - stime)*1000));
     }
     return _wrap_py_return_val;
 }
 
 /* ================== C Wrappers for MPI_Waitall ================== */
-_EXTERN_C_ int PMPI_Waitall(int arg_0, MPI_Request *arg_1, MPI_Status *arg_2);
-_EXTERN_C_ int MPI_Waitall(int arg_0, MPI_Request *arg_1, MPI_Status *arg_2) 
+_EXTERN_C_ int PMPI_Waitall(int reqCount, MPI_Request *arg_1, MPI_Status *arg_2);
+_EXTERN_C_ int MPI_Waitall(int reqCount, MPI_Request *arg_1, MPI_Status *arg_2) 
 { 
-    int _wrap_py_return_val = 0;
- 
+    int _wrap_py_return_val = 0, i;
+
+    for(i = 0; i < reqCount; ++i)
     {
-      _wrap_py_return_val = PMPI_Waitall(arg_0, arg_1, arg_2);
+        totalOps++;
+        writeMetaData(_MPI_WAIT_, 0, 0, -1, 0, 0,
+                      ++opSeqCount[_MPI_WAIT_][myRank]); 
+    }
+    
+    {
+        stime = MPI_Wtime();
+      _wrap_py_return_val = PMPI_Waitall(reqCount, arg_1, arg_2);
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_WAITALL_], (int)round((etime - stime)*1000));
     }
     return _wrap_py_return_val;
 }
@@ -945,12 +1213,24 @@ _EXTERN_C_ int MPI_Init(int *argc, char ***argv)
     int i, j;
 
     fileName = malloc(strlen(baseFileName) + 4);
-    buf = malloc(2);
+    buf = (char*)malloc(3);
+
+    for(i = 0; i < _NUM_MPI_OPS_; ++i)
+    {
+        mpiOpTimes[i] = NULL;
+        for(j = 0; j < 5; j++)
+        {
+                stats[i][j] = 0;
+        }
+    }
 
     strcpy(fileName, baseFileName);
-    {
+    
+      stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Init(argc, argv);
-    }
+      etime = MPI_Wtime();
+      insert(&mpiOpTimes[_MPI_INIT_], (int)round((etime - stime)*1000));
+    
 
     MPI_Comm_rank(MPI_COMM_WORLD, &myRank); 
     MPI_Comm_size(MPI_COMM_WORLD, &numNodes);
@@ -978,7 +1258,8 @@ _EXTERN_C_ int PMPI_Finalize();
 _EXTERN_C_ int MPI_Finalize() 
 { 
     int _wrap_py_return_val = 0;
-    char *buf = malloc(5), *tmpFileName;
+    char *buf = malloc(20);
+    char *tmpFileName;
     char ch, *bufKey, *line = NULL, *bufLine = NULL;
     ssize_t read; 
     size_t len = 0;
@@ -1184,15 +1465,21 @@ _EXTERN_C_ int MPI_Finalize()
         cur = root;
         longestPathInGraph(Graph);
         writeToCritPathOut(Graph);
-        
+
         u = 0;
         cur = root;
         fillDotGraph(Graph);    
         k = system("mv dotGraph.txt dotGraph.dot");
-        k = system("dot -Tpng -oCritPathGraph.png dotGraph.dot");  
+        //k = system("dot -Tpng -oCritPathGraph.png dotGraph.dot");  
 
+        //Done with everything. Remove the temporary files
+        k = system("rm tmp*");
     }   
+    stime = MPI_Wtime();
     _wrap_py_return_val = PMPI_Finalize();
-    
+    etime = MPI_Wtime();
+    insert(&mpiOpTimes[_MPI_FINALIZE_], (int)round((etime - stime)*1000));
+    writeToStatsDat();
+
     return _wrap_py_return_val;
 }
