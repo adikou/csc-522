@@ -654,9 +654,9 @@ void isEdgeCritical(adjList *e)
                criticalPath[i].dest == e->dest &&
                criticalPath[i].weight == e->weight)
             {
-                e->isCritical = 1;
+                if(flag)
+                    e->isCritical = 1;
                 flag = 0;
-                break;
             }
         e = e->next;
     }
@@ -895,7 +895,7 @@ void writeToStatsDat()
     }
 
     fclose(fout);
-
+    PMPI_Barrier(MPI_COMM_WORLD);
     if(myRank == 0)
     {
         fout = fopen("stats.dat", "w");
@@ -1516,14 +1516,11 @@ _EXTERN_C_ int MPI_Finalize()
         k = system("mv dotGraph.txt dotGraph.dot");
 
     }   
-    stime = MPI_Wtime();
-    _wrap_py_return_val = PMPI_Finalize();
-    etime = MPI_Wtime();
-    insert(&mpiOpTimes[_MPI_FINALIZE_], (int)round((etime - stime)*1000));
     writeToStatsDat();
+    _wrap_py_return_val = PMPI_Finalize();
 
-    //if(myRank == 0)
-        //k = system("dot -Tpng -oCritPathGraph.png dotGraph.dot");  
+    if(myRank == 0)
+        k = system("dot -Tpng -oCritPathGraph.png dotGraph.dot");  
 
     return _wrap_py_return_val;
 }
