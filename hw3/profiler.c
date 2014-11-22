@@ -1,3 +1,4 @@
+
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,6 +58,28 @@ _EXTERN_C_ int MPI_Recv(void *arg_0, int arg_1, MPI_Datatype arg_2, int arg_3, i
  
 {
   _wrap_py_return_val = PMPI_Recv(arg_0, arg_1, arg_2, arg_3, arg_4, arg_5, arg_6);
+}
+    return _wrap_py_return_val;
+}
+
+/* ================== C Wrappers for MPI_Comm_size ================== */
+_EXTERN_C_ int PMPI_Comm_size(MPI_Comm arg_0, int *arg_1);
+_EXTERN_C_ int MPI_Comm_size(MPI_Comm arg_0, int *arg_1) { 
+    int _wrap_py_return_val = 0;
+ 
+{
+  _wrap_py_return_val = PMPI_Comm_size(arg_0, arg_1);
+}
+    return _wrap_py_return_val;
+}
+
+/* ================== C Wrappers for MPI_Comm_rank ================== */
+_EXTERN_C_ int PMPI_Comm_rank(MPI_Comm arg_0, int *arg_1);
+_EXTERN_C_ int MPI_Comm_rank(MPI_Comm arg_0, int *arg_1) { 
+    int _wrap_py_return_val = 0;
+ 
+{
+  _wrap_py_return_val = PMPI_Comm_rank(arg_0, arg_1);
 }
     return _wrap_py_return_val;
 }
