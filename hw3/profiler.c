@@ -37,6 +37,7 @@ _EXTERN_C_ void pmpi_init__(MPI_Fint *ierr);
 #define ALIVE 1
 #define DEAD  0
 #define BARRIER_TAG 0xb001
+#define SYNC_TAG    0x57a6
 
 int protoType;
 int trueRank, trueNumNodes;
@@ -106,22 +107,14 @@ _EXTERN_C_ int MPI_Barrier(MPI_Comm arg_0) {
         if(scheduleDeath[i] == DEAD)
             alive[i] = DEAD;
 
-    printf("\nAlive vector rank#%d ", trueRank);
-    for(i = 0; i < trueNumNodes; ++i)
-        printf("%d ", alive[i]);
-    printf("\n");
-
     if(alive[trueRank] == DEAD)
     {
-        printf("\n%d Calling MPI_Finalize", trueRank);
         MPI_Finalize();
         exit(0);
     }
     else
     {
-        printf("\n%d Barrier", trueRank);
         _wrap_py_return_val = My_Barrier(arg_0);
-        printf("\n%d out of barrier", trueRank);
     }
     
     return _wrap_py_return_val;
@@ -138,11 +131,6 @@ _EXTERN_C_ int MPI_Pcontrol(int level, ...) {
     if(level < trueNumNodes)
         scheduleDeath[level] = DEAD;
 
-    printf("\nSchedule Death vector rank#%d ", trueRank);
-    for(i = 0; i < trueNumNodes; ++i)
-        printf("%d ", scheduleDeath[i]);
-    printf("\n");
-
     return _wrap_py_return_val;
 }
 
@@ -153,6 +141,7 @@ _EXTERN_C_ int MPI_Send(void *buf, int cnt, MPI_Datatype datatype, int dest,
                          int tag, MPI_Comm comm) 
 {
     int _wrap_py_return_val = 0;
+    int replicaPartner = 0;
     if(!isLeaderNode)
         dest = dest + fakeNumNodes;
 
@@ -207,11 +196,102 @@ _EXTERN_C_ int MPI_Send(void *buf, int cnt, MPI_Datatype datatype, int dest,
     // PARALLEL PROTOCOL
     else
     {
+        if(isLeaderNode)
+        {
+            //sync up with replica partner A' if it is alive
+            replicaPartner = trueRank + fakeNumNodes;
+            if(alive[replicaPartner])
+            {
+                // Send small message
+                PMPI_Send(NULL, 0 , MPI_BYTE, replicaPartner, 
+                          SYNC_TAG, MPI_COMM_WORLD);
 
+                // Block till replica sends reply
+                PMPI_Recv(NULL, 0 , MPI_BYTE, replicaPartner, SYNC_TAG,
+                          MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+                //Sync done. Send to next dest if alive
+                if(alive[dest])
+                {
+                    printf("\nLead to lead while replica partner is alive");
+                    printf("\nRank#%d MPI_Send %d->%d tag %d", trueRank, 
+                       trueRank, dest, tag);
+                    _wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, 
+                                                    tag, comm);
+                }
+            }   
+            else
+            {
+                //Replica partner A' is dead. Step in and send to 
+                // current dest and replica dest if alive
+                if(alive[dest])
+                {
+                    printf("\nLead to lead replica partner is dead");
+                    printf("\nRank#%d MPI_Send %d->%d tag %d", trueRank, 
+                       trueRank, dest, tag);
+                    _wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, 
+                                                    tag, comm);
+                }
+                dest = dest + fakeNumNodes;
+                if(alive[dest])
+                {
+                    printf("\nLead to replica dest - partner is dead");
+                    printf("\nRank#%d MPI_Send %d->%d tag %d", trueRank, 
+                       trueRank, dest, tag);
+                    _wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, 
+                                                    tag, comm);
+                }
+            }
+
+        }
+        else
+        {
+            //sync up with lead partner A if it is alive
+            replicaPartner = trueRank - fakeNumNodes;
+            if(alive[replicaPartner])
+            {
+                // Receive msg from lead
+                PMPI_Recv(NULL, 0 , MPI_BYTE, replicaPartner, SYNC_TAG,
+                          MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+                // Send a reply
+                PMPI_Send(NULL, 0 , MPI_BYTE, replicaPartner, SYNC_TAG,
+                          MPI_COMM_WORLD);
+
+                //Sync done. Send to next dest if alive
+                if(alive[dest])
+                {
+                    printf("\nReplica to replica while lead partner is alive");
+                    printf("\nRank#%d MPI_Send %d->%d tag %d", trueRank, 
+                       trueRank, dest, tag);
+                    _wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, 
+                                                    tag, comm);
+                }
+            }   
+            else
+            {
+                // Lead partner A is dead. Step in and send to 
+                // current dest and lead dest if alive
+                if(alive[dest])
+                {
+                    printf("\nReplica to replica, lead partner is dead");
+                    printf("\nRank#%d MPI_Send %d->%d tag %d", trueRank, 
+                       trueRank, dest, tag);
+                    _wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, 
+                                                    tag, comm);
+                }
+                dest = dest - fakeNumNodes;
+                if(alive[dest])
+                {
+                    printf("\nReplica to lead dest - partner is dead");
+                    printf("\nRank#%d MPI_Send %d->%d tag %d", trueRank, 
+                       trueRank, dest, tag);
+                    _wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, 
+                                                    tag, comm);
+                }
+            }
+        }
     }
-{
-  //_wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, tag, comm);
-}
     return _wrap_py_return_val;
 }
 
@@ -253,7 +333,7 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
         }
         else
         {
-            // Send to next node first
+            // Receive from next node first
             if(alive[source])
             {
                 printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
@@ -278,12 +358,54 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
     // PARALLEL PROTOCOL
     else
     {
+        if(isLeaderNode)
+        {
+            // Receive from lead source, if alive first
+            if(alive[source])
+            {
+                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                    trueRank, tag );
 
+                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                tag, comm, status);
+            }
+            else
+            {
+                //Lead source dead. Replica will be alive Receive from it.
+                source = source + fakeNumNodes;
+
+                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                    trueRank, tag );
+
+                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                tag, comm, status);    
+            }
+
+        }
+        else
+        {
+            // Receive from replica source, if alive first
+            if(alive[source])
+            {
+                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                    trueRank, tag );
+
+                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                tag, comm, status);
+            }
+            else
+            {
+                //Replica source dead. Lead will be alive. Receive from it.
+                source = source - fakeNumNodes;
+
+                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                    trueRank, tag );
+
+                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                tag, comm, status);    
+            }
+        }
     }
-{
-//_wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, tag, 
-//                                      comm, status);
-}
     return _wrap_py_return_val;
 }
 
@@ -359,7 +481,6 @@ _EXTERN_C_ int PMPI_Finalize();
 _EXTERN_C_ int MPI_Finalize() { 
     int _wrap_py_return_val = 0;
  
-    printf("\n%d says bye bye\n", trueRank);
 {
   _wrap_py_return_val = PMPI_Finalize();
 }
