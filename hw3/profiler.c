@@ -36,14 +36,28 @@ _EXTERN_C_ void pmpi_init__(MPI_Fint *ierr);
 #define PARALLEL 1
 #define ALIVE 1
 #define DEAD  0
-#define BARRIER_TAG 0xb001
-#define SYNC_TAG    0x57a6
+#define BARRIER_TAG     0xdad
+#define SYNC_TAG        0xfad
+#define RECV_SYNC_TAG   0xbad
 
 int protoType;
 int trueRank, trueNumNodes;
 int fakeRank, fakeNumNodes;
 int barrierCount = 0, isLeaderNode = 0;
 int *alive, *scheduleDeath;
+
+/********************************************************************/
+int getRealRank(int rank)
+{
+    if(rank < fakeNumNodes)
+        return rank;
+    else return rank +fakeNumNodes;
+}
+
+int getFakeRank(int rank)
+{
+    return rank;
+}
 
 int My_Barrier(MPI_Comm comm)
 {
@@ -257,7 +271,6 @@ _EXTERN_C_ int MPI_Send(void *buf, int cnt, MPI_Datatype datatype, int dest,
                 // Send a reply
                 PMPI_Send(NULL, 0 , MPI_BYTE, replicaPartner, SYNC_TAG,
                           MPI_COMM_WORLD);
-
                 //Sync done. Send to next dest if alive
                 if(alive[dest])
                 {
@@ -274,7 +287,7 @@ _EXTERN_C_ int MPI_Send(void *buf, int cnt, MPI_Datatype datatype, int dest,
                 // current dest and lead dest if alive
                 if(alive[dest])
                 {
-                    printf("\nReplica to replica, lead partner is dead");
+                    printf("\nReplica to lead, lead partner is dead");
                     printf("\nRank#%d MPI_Send %d->%d tag %d", trueRank, 
                        trueRank, dest, tag);
                     _wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, 
@@ -283,7 +296,7 @@ _EXTERN_C_ int MPI_Send(void *buf, int cnt, MPI_Datatype datatype, int dest,
                 dest = dest - fakeNumNodes;
                 if(alive[dest])
                 {
-                    printf("\nReplica to lead dest - partner is dead");
+                    printf("\nReplica to replica dest - partner is dead");
                     printf("\nRank#%d MPI_Send %d->%d tag %d", trueRank, 
                        trueRank, dest, tag);
                     _wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, 
@@ -301,108 +314,242 @@ _EXTERN_C_ int PMPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
 _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source, 
                          int tag, MPI_Comm comm, MPI_Status *status) 
 {
-    int _wrap_py_return_val = 0;
-    if(!isLeaderNode)
-        source = source + fakeNumNodes;
+    int _wrap_py_return_val = 0, i;
+    MPI_Status syncStatus;
+    int src, statusTag, replicaPartner;
 
-    // MIRRORED PROTOCOL
-    if(protoType == MIRRORED)
+    if(source != MPI_ANY_SOURCE)
     {
-        if(isLeaderNode)
+        // MIRRORED PROTOCOL
+        if(protoType == MIRRORED)
         {
-            
-            // Send to next node first
-            if(alive[source])
+            if(isLeaderNode)
             {
-                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, 
-                    source, trueRank, tag);
-                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
-                                                tag, comm, status);
-            }
+                // Send to next node first
+                if(alive[source])
+                {
+                    printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, 
+                        source, trueRank, tag);
+                    _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                    tag, comm, status);
+                }
 
-            //Get replica node rank and send if alive
-            source = source + fakeNumNodes;
-            
-            if(alive[source])
+                //Get replica node rank and send if alive
+                source = source + fakeNumNodes;
+                
+                if(alive[source])
+                {
+                    printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                        trueRank, tag + 100);
+                    _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                    tag + 100, comm, status);
+                }
+            }
+            else
             {
-                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
-                    trueRank, tag + 100);
-                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
-                                                tag + 100, comm, status);
+                source = source + fakeNumNodes;
+                // Receive from next node first
+                if(alive[source])
+                {
+                    printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                        trueRank, tag + 100);
+
+                    _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                    tag + 100, comm, status);
+                }
+
+                //Get lead node rank and send if alive
+                source = source - fakeNumNodes;
+                
+                if(alive[source])
+                {
+                    printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                        trueRank, tag);
+                    _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                    tag, comm, status);    
+                }
             }
         }
+        // PARALLEL PROTOCOL
         else
         {
-            // Receive from next node first
-            if(alive[source])
+            if(isLeaderNode)
             {
-                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
-                    trueRank, tag + 100);
+                // Receive from lead source, if alive first
+                if(alive[source])
+                {
+                    printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                        trueRank, tag );
 
-                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
-                                                tag + 100, comm, status);
+                    _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                    tag, comm, status);
+                }
+                else
+                {
+                    //Lead source dead. Replica will be alive Receive from it.
+                    source = source + fakeNumNodes;
+
+                    printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                        trueRank, tag );
+
+                    _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                    tag, comm, status);    
+                }
+
             }
-
-            //Get replica node rank and send if alive
-            source = source - fakeNumNodes;
-            
-            if(alive[source])
+            else
             {
-                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
-                    trueRank, tag);
-                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
-                                                tag, comm, status);    
+                source = source + fakeNumNodes;
+                // Receive from replica source, if alive first
+                if(alive[source])
+                {
+                    printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                        trueRank, tag );
+
+                    _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                    tag, comm, status);
+                }
+                else
+                {
+                    //Replica source dead. Lead will be alive. Receive from it.
+                    source = source - fakeNumNodes;
+
+                    printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
+                        trueRank, tag );
+
+                    _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
+                                                    tag, comm, status);    
+                }
             }
         }
     }
-    // PARALLEL PROTOCOL
+
+    // MPI_ANY_SOURCE is here to steal the day!!!
     else
     {
-        if(isLeaderNode)
+        // MIRRORED protocol
+        if(protoType == MIRRORED)
         {
-            // Receive from lead source, if alive first
-            if(alive[source])
+            if(isLeaderNode)
             {
-                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
-                    trueRank, tag );
+                replicaPartner = trueRank + fakeNumNodes;
+                // MPI_SOURCE will tell us local rank info.
+                // Post recv with MPI_ANY_SOURCE & MPI_ANY_TAG
+                // Receive from any source - it is, of course, alive
 
-                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
-                                                tag, comm, status);
+                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, 
+                                                MPI_ANY_SOURCE, MPI_ANY_TAG, 
+                                                comm, &syncStatus);
+                statusTag = syncStatus.MPI_TAG;
+                src = syncStatus.MPI_SOURCE;
+
+
+                // We have specific source. Sync with replica if alive
+                if(alive[replicaPartner])
+                {
+                    PMPI_Send(&src, 1, MPI_INT, replicaPartner, 
+                              RECV_SYNC_TAG, MPI_COMM_WORLD);
+
+                    // ACK would have been received. Replica has received src
+                   
+                }
+                
+                // Now post specific receive for the other guy
+                // This can be either from replica or lead
+                if(src >= fakeNumNodes)
+                {
+                    src = src - fakeNumNodes;
+                    statusTag = statusTag - 100;
+                }
+                else
+                {
+                    src = src + fakeNumNodes;
+                    statusTag = statusTag + 100;
+                }
+                // Specific receive if he's alive
+                if(alive[src])
+                    _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, 
+                                                    src, statusTag, 
+                                                    comm, status);
+
             }
             else
             {
-                //Lead source dead. Replica will be alive Receive from it.
-                source = source + fakeNumNodes;
+                replicaPartner = trueRank - fakeNumNodes;
 
-                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
-                    trueRank, tag );
+                // Lead is alive. Get first specific src info (&  sync)
+                if(alive[replicaPartner])
+                {
+                    // Receive specific source ID. This also helos us calc tag 
+                    PMPI_Recv(&src, 1, MPI_INT, replicaPartner, RECV_SYNC_TAG,
+                              MPI_COMM_WORLD, &syncStatus);
 
-                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
-                                                tag, comm, status);    
+                    // Some hackiness is required here. Ordering of messages is
+                    // a problem due to blocking sends/recvs. Receive from
+                    // replica regardless of who sent the initial any_source
+
+                    if(src < fakeNumNodes)
+                        src = src + fakeNumNodes;
+
+                    if(alive[src])
+                        _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, 
+                                                        src, tag + 100, 
+                                                        comm, status);  
+
+                    src = src - fakeNumNodes;
+
+                    // Specific receive if he's alive
+                    if(alive[src])
+                        _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, 
+                                                        src, tag, 
+                                                        comm, status);
+                }
+
+                // Lead is dead. We must take the burden of receiving both
+                else
+                {
+                    // MPI_SOURCE will tell us local rank info.
+                    // Continuing without lead
+                    _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, 
+                                                    MPI_ANY_SOURCE, MPI_ANY_TAG, 
+                                                    comm, &syncStatus);
+
+                    statusTag = syncStatus.MPI_TAG;
+                    src = syncStatus.MPI_SOURCE;
+
+                    // Now post specific receive for the other guy
+                    // This can be either from replica or lead
+                    if(statusTag >= 100)
+                    {
+                        src = src - fakeNumNodes;
+                        statusTag = statusTag - 100;
+                    }
+                    else
+                    {
+                        src = src + fakeNumNodes;
+                        statusTag = statusTag + 100;
+                    }
+
+                    // Specific receive if he's alive
+                    if(alive[src])
+                        _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, 
+                                                        src, statusTag, 
+                                                        comm, status);
+
+                }
             }
-
         }
+
+        // PARALLEL protocol
         else
         {
-            // Receive from replica source, if alive first
-            if(alive[source])
+            if(isLeaderNode)
             {
-                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
-                    trueRank, tag );
 
-                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
-                                                tag, comm, status);
             }
             else
             {
-                //Replica source dead. Lead will be alive. Receive from it.
-                source = source - fakeNumNodes;
 
-                printf("\nRank#%d MPI_Recv %d->%d tag %d", trueRank, source, 
-                    trueRank, tag );
-
-                _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
-                                                tag, comm, status);    
             }
         }
     }
