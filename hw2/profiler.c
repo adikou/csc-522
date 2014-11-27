@@ -395,7 +395,7 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         fprintf(fout, "%s", tmp.key);
                         fprintf(fout, "%s", FOUR_SPACES);
                         buf = malloc(10);
-                        sprintf(buf, "%d", (int)round((endTime - startTime)*1000));
+                        sprintf(buf, "%d", (int)round((endTime - startTime)));
                         fprintf(fout, "%s", buf);
                         fprintf(fout, "%s", FOUR_SPACES);
                         if(mpiOp == _MPI_SEND_)
@@ -427,7 +427,7 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         fprintf(fout, "%s", FOUR_SPACES);
                         
                         buf = malloc(10);
-                        sprintf(buf, "%d", (int)round((endTime - startTime)*1000));
+                        sprintf(buf, "%d", (int)round((endTime - startTime)));
                         fprintf(fout, "%s", buf);
                         fprintf(fout, "%s", "\n");
 
@@ -447,7 +447,7 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         fprintf(fout, "%s", tmp.key);
                         fprintf(fout, "%s", FOUR_SPACES);   
                         buf = malloc(10);
-                        sprintf(buf, "%d", (int)round((endTime - startTime)*1000));
+                        sprintf(buf, "%d", (int)round((endTime - startTime)));
                         fprintf(fout, "%s", buf);
                         fprintf(fout, "%s", FOUR_SPACES);
                         fprintf(fout, "%s", "\n");
@@ -465,7 +465,7 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         fprintf(fout, "%s", tmp.key);
                         fprintf(fout, "%s", FOUR_SPACES);   
                         buf = malloc(10);
-                        sprintf(buf, "%d", (int)round((endTime - startTime)*1000));
+                        sprintf(buf, "%d", (int)round((endTime - startTime)));
                         fprintf(fout, "%s", buf);
                         fprintf(fout, "%s", FOUR_SPACES);
                         fprintf(fout, "%s", "\n");
@@ -488,7 +488,7 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                             fprintf(fout, "%s", tmp.key);
                             fprintf(fout, "%s", FOUR_SPACES);
                             buf = malloc(10);
-                            sprintf(buf, "%d", (int)round((endTime - startTime)*1000));
+                            sprintf(buf, "%d", (int)round((endTime - startTime)));
                             fprintf(fout, "%s", buf);
                             fprintf(fout, "%s", "\n");
                         }
@@ -998,7 +998,7 @@ _EXTERN_C_ int MPI_Barrier(MPI_Comm arg_0)
     stime = MPI_Wtime();
     _wrap_py_return_val = PMPI_Barrier(arg_0);
     etime = MPI_Wtime();
-    insert(&mpiOpTimes[_MPI_BARRIER_], (int)round((etime - stime)*1000));
+    insert(&mpiOpTimes[_MPI_BARRIER_], (int)round((etime - stime)));
   }
     return _wrap_py_return_val;
 }
@@ -1021,7 +1021,7 @@ _EXTERN_C_ int MPI_Alltoall(void *arg_0, int arg_1, MPI_Datatype arg_2,
     _wrap_py_return_val = PMPI_Alltoall(arg_0, arg_1, arg_2, arg_3, arg_4, 
                                         arg_5, arg_6);
     etime = MPI_Wtime();
-    insert(&mpiOpTimes[_MPI_ALLTOALL_], (int)round((etime - stime)*1000));
+    insert(&mpiOpTimes[_MPI_ALLTOALL_], (int)round((etime - stime)));
   }
     return _wrap_py_return_val;
 }
@@ -1043,7 +1043,7 @@ _EXTERN_C_ int MPI_Scatter(void *arg_0, int arg_1, MPI_Datatype arg_2,
       _wrap_py_return_val = PMPI_Scatter(arg_0, arg_1, arg_2, arg_3, arg_4, 
                                          arg_5, arg_6, arg_7);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_SCATTER_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_SCATTER_], (int)round((etime - stime)));
     }
     return _wrap_py_return_val;
 }
@@ -1067,7 +1067,7 @@ _EXTERN_C_ int MPI_Gather(void *arg_0, int arg_1, MPI_Datatype arg_2,
       _wrap_py_return_val = PMPI_Gather(arg_0, arg_1, arg_2, arg_3, arg_4, 
                                         arg_5, arg_6, arg_7);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_GATHER_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_GATHER_], (int)round((etime - stime)));
     }
     return _wrap_py_return_val;
 }
@@ -1089,7 +1089,7 @@ _EXTERN_C_ int MPI_Reduce(void *arg_0, void *arg_1, int arg_2,
       _wrap_py_return_val = PMPI_Reduce(arg_0, arg_1, arg_2, arg_3, arg_4, 
                                         arg_5, arg_6);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_REDUCE_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_REDUCE_], (int)round((etime - stime)));
     }
     return _wrap_py_return_val;
 }
@@ -1111,7 +1111,7 @@ _EXTERN_C_ int MPI_Allreduce(void *arg_0, void *arg_1, int arg_2,
       _wrap_py_return_val = PMPI_Allreduce(arg_0, arg_1, arg_2, arg_3, 
                                            arg_4, arg_5);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_ALLREDUCE_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_ALLREDUCE_], (int)round((etime - stime)));
     }
     return _wrap_py_return_val;
 }
@@ -1130,7 +1130,7 @@ _EXTERN_C_ int MPI_Send(void *buf, int cnt, MPI_Datatype datatype, int dest,
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, tag, comm);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_SEND_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_SEND_], (int)round((etime - stime)));
     }
     count = setAndGetCount(&opSeqCount[_MPI_SEND_][dest], tag);
     writeMetaData(_MPI_SEND_, myRank, dest, tag, cnt, latency, count);
@@ -1151,7 +1151,7 @@ _EXTERN_C_ int MPI_Isend(void *buf, int cnt, MPI_Datatype datatype, int dest,
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Isend(buf, cnt, datatype, dest, tag, comm, request);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_ISEND_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_ISEND_], (int)round((etime - stime)));
     }
      count = setAndGetCount(&opSeqCount[_MPI_ISEND_][dest], tag);
     writeMetaData(_MPI_ISEND_, myRank, dest, tag, cnt, latency, count);
@@ -1174,7 +1174,7 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
       _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, tag, 
                                       comm, status);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_RECV_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_RECV_], (int)round((etime - stime)));
     }
     return _wrap_py_return_val;
 }
@@ -1196,7 +1196,7 @@ _EXTERN_C_  int MPI_Irecv(void *buf, int cnt, MPI_Datatype datatype, int source,
       _wrap_py_return_val = PMPI_Irecv(buf, cnt, datatype, source, tag, 
                                       comm, request);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_IRECV_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_IRECV_], (int)round((etime - stime)));
     }
     return _wrap_py_return_val;
 }
@@ -1213,7 +1213,7 @@ _EXTERN_C_ int MPI_Wait(MPI_Request *arg_0, MPI_Status *arg_1)
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Wait(arg_0, arg_1);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_WAIT_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_WAIT_], (int)round((etime - stime)));
     }
     return _wrap_py_return_val;
 }
@@ -1233,7 +1233,7 @@ _EXTERN_C_ int MPI_Waitall(int reqCount, MPI_Request *arg_1, MPI_Status *arg_2)
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Waitall(reqCount, arg_1, arg_2);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_WAIT_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_WAIT_], (int)round((etime - stime)));
     }
     
     {
@@ -1267,7 +1267,7 @@ _EXTERN_C_ int MPI_Init(int *argc, char ***argv)
       stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Init(argc, argv);
       etime = MPI_Wtime();
-      insert(&mpiOpTimes[_MPI_INIT_], (int)round((etime - stime)*1000));
+      insert(&mpiOpTimes[_MPI_INIT_], (int)round((etime - stime)));
     
 
     MPI_Comm_rank(MPI_COMM_WORLD, &myRank); 
