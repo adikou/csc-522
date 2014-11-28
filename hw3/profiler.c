@@ -641,7 +641,7 @@ _EXTERN_C_ int MPI_Init(int *arg_0, char ***arg_1) {
             switch(strcmp(bufProto, "MIRRORED"))
             {
                 case 0 : protoType = MIRRORED; envflag = 0; break;
-                case 1 : switch(strcmp(bufProto, "MIRRORED"))
+                case 1 : switch(strcmp(bufProto, "PARALLEL"))
                          {
                             case 0 : protoType = PARALLEL; envflag = 0; break;
                             default: printf("\nPlease specify " 
