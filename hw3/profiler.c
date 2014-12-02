@@ -51,6 +51,21 @@ int numMPIops = 0;
 
 /********************************************************************/
 
+int resolveRank(int rank)
+{
+    if(rank >= fakeNumNodes)
+        return rank - fakeNumNodes;
+    else
+        return rank;
+}
+
+int resolveTag(int tag)
+{
+    if(tag >= 100)
+        return tag - 100;
+    else return tag;
+}
+
 int My_Barrier(MPI_Comm comm)
 {
     int err = 0, i, size = 0, firstAlive = -1, nextAlive = -1;
@@ -320,6 +335,12 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                     _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
                                                     tag + 100, comm, status);
                 }
+
+                if(status != NULL) 
+                {
+                    status->MPI_SOURCE = resolveRank(source);
+                    status->MPI_TAG = resolveTag(tag);
+                }
             }
             else
             {
@@ -340,6 +361,12 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                     numMPIops++;
                     _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
                                                     tag, comm, status);    
+                }
+
+                if(status != NULL)
+                {
+                    status->MPI_SOURCE = resolveRank(source);
+                    status->MPI_TAG = resolveTag(tag);  
                 }
             }
         }
@@ -365,6 +392,11 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                                                     tag, comm, status);    
                 }
 
+                if(status != NULL)
+                {
+                    status->MPI_SOURCE = resolveRank(source);
+                    status->MPI_TAG = resolveTag(tag);
+                }
             }
             else
             {
@@ -383,6 +415,12 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                     numMPIops++;
                     _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, 
                                                     tag, comm, status);    
+                }
+
+                if(status != NULL)
+                {
+                    status->MPI_SOURCE = resolveRank(source);
+                    status->MPI_TAG = resolveTag(tag);
                 }
             }
         }
@@ -403,9 +441,9 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                 numMPIops++;
                 _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, 
                                                 MPI_ANY_SOURCE, MPI_ANY_TAG, 
-                                                comm, &syncStatus);
-                statusTag = syncStatus.MPI_TAG;
-                src = syncStatus.MPI_SOURCE;
+                                                comm, status);
+                statusTag = status->MPI_TAG;
+                src = status->MPI_SOURCE;
 
 
                 // We have specific source. Sync with replica if alive
@@ -439,6 +477,12 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                                                     src, statusTag, 
                                                     comm, status);
                 }
+
+                if(status != NULL)
+                {
+                    status->MPI_SOURCE = resolveRank(src);
+                    status->MPI_TAG = resolveTag(statusTag);
+                }
             }
             else
             {
@@ -450,7 +494,7 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                     numMPIops++;
                     // Receive specific source ID. This also helos us calc tag 
                     PMPI_Recv(&src, 1, MPI_INT, replicaPartner, RECV_SYNC_TAG,
-                              MPI_COMM_WORLD, &syncStatus);
+                              MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
                     // Some hackiness is required here. Ordering of messages is
                     // a problem due to blocking sends/recvs. Receive from
@@ -476,6 +520,12 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                                                         src, tag, 
                                                         comm, status);
                     }
+
+                    if(status != NULL)
+                    {
+                        status->MPI_SOURCE = resolveRank(src);
+                        status->MPI_TAG = resolveTag(tag);
+                    }
                 }
 
                 // Lead is dead. We must take the burden of receiving both
@@ -487,10 +537,10 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
 
                     _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, 
                                                     MPI_ANY_SOURCE, MPI_ANY_TAG, 
-                                                    comm, &syncStatus);
+                                                    comm, status);
 
-                    statusTag = syncStatus.MPI_TAG;
-                    src = syncStatus.MPI_SOURCE;
+                    statusTag = status->MPI_TAG;
+                    src = status->MPI_SOURCE;
 
                     // Now post specific receive for the other guy
                     // This can be either from replica or lead
@@ -514,6 +564,12 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                                                         comm, status);
                     }
 
+                    if(status != NULL)
+                    {
+                        status->MPI_SOURCE = resolveRank(src);
+                        status->MPI_TAG = resolveTag(statusTag);
+                    }
+
                 }
             }
         }
@@ -531,9 +587,9 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                 numMPIops++;
                 _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, 
                                                 MPI_ANY_SOURCE, MPI_ANY_TAG, 
-                                                comm, &syncStatus);
-                statusTag = syncStatus.MPI_TAG;
-                src = syncStatus.MPI_SOURCE;
+                                                comm, status);
+                statusTag = status->MPI_TAG;
+                src = status->MPI_SOURCE;
 
                 // We have specific source. Sync with replica if alive
                 if(alive[replicaPartner])
@@ -545,6 +601,12 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                     // ACK would have been received. Replica has received src
                    
                 }
+
+                if(status != NULL)
+                {
+                    status->MPI_SOURCE = resolveRank(src);
+                    status->MPI_TAG = resolveTag(statusTag);
+                }
             }
             else
             {
@@ -555,7 +617,7 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                 {
                     numMPIops++;
                     PMPI_Recv(&src, 1, MPI_INT, replicaPartner, 
-                              RECV_SYNC_TAG, MPI_COMM_WORLD, &syncStatus);
+                              RECV_SYNC_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
                     if(src < fakeNumNodes)
                     {
@@ -571,13 +633,28 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
                                                     src, tag, 
                                                     comm, status);
 
+                    if(status != NULL)
+                    {
+                        status->MPI_SOURCE = resolveRank(src);
+                        status->MPI_TAG = resolveTag(tag);
+                    }
+
                 }
                 else
                 {
                     numMPIops++;
                     _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, 
                                                 MPI_ANY_SOURCE, MPI_ANY_TAG, 
-                                                comm, &syncStatus);
+                                                comm, status);
+
+                    src = status->MPI_SOURCE;
+                    statusTag = status->MPI_TAG;
+
+                    if(status != NULL)
+                    {
+                        status->MPI_SOURCE = resolveRank(src);
+                        status->MPI_TAG = resolveTag(statusTag);
+                    }
                 }
             }
         }
