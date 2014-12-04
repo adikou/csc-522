@@ -367,7 +367,7 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
     {
         case _MPI_INIT_ : 
                         fout = fopen(fileName, "w");
-                        startTime = MPI_Wtime();
+                        
                         if(myRank == 0)
                         {
                             tmp.key = malloc(30);
@@ -385,7 +385,7 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         break;
         case _MPI_SEND_ : case _MPI_ISEND_ :
                         fout = fopen(fileName, "a");
-                        endTime = MPI_Wtime();
+                        
 
                         tmp.key = malloc(50);
                         tmp.interTreeChild = malloc(50);
@@ -413,12 +413,10 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         fprintf(fout, "%s", "\n");
 
                         fclose(fout);
-                        startTime = MPI_Wtime();
                         break;
         case _MPI_IRECV_ : 
         case _MPI_RECV_ : 
                         fout = fopen(fileName, "a");
-                        endTime = MPI_Wtime();
 
                         tmp.key = malloc(50);
                         generateKey(tmp.key, mpiOp, toRank, 
@@ -432,7 +430,6 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         fprintf(fout, "%s", "\n");
 
                         fclose(fout);
-                        startTime = MPI_Wtime();
  
                         break;
                         
@@ -440,7 +437,6 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
         case _MPI_GATHER_  : case _MPI_ALLREDUCE_ :
         case _MPI_ALLTOALL_ : case _MPI_REDUCE_:
                         fout = fopen(fileName, "a");
-                        endTime = MPI_Wtime();
                         tmp.key = malloc(50);
                         generateKey(tmp.key, mpiOp, fromRank, 
                                     toRank, tag, opSeq);
@@ -453,12 +449,10 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         fprintf(fout, "%s", "\n");
                         
                         fclose(fout);
-                        startTime = MPI_Wtime();
                         break;
         
         case _MPI_WAIT_         : 
                         fout = fopen(fileName, "a");
-                        endTime = MPI_Wtime();
                         tmp.key = malloc(50);
                         generateKey(tmp.key, mpiOp, fromRank, 
                                     toRank, tag, opSeq);
@@ -471,7 +465,6 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         fprintf(fout, "%s", "\n");
                         
                         fclose(fout);
-                        startTime = MPI_Wtime();
                         break;
         case _MPI_WAITALL_      : break;
         
@@ -479,7 +472,6 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         fout = fopen(fileName, "a");
                         if(myRank == 0)
                         {
-                            endTime = MPI_Wtime();
                             tmp.key = malloc(30);
                             generateKey(tmp.key, mpiOp, fromRank, 
                                         toRank, tag, opSeq);
@@ -992,14 +984,18 @@ _EXTERN_C_ int MPI_Barrier(MPI_Comm arg_0)
     int _wrap_py_return_val = 0, count;
     totalOps++;
     
-    count = setAndGetCount(&opSeqCount[_MPI_BARRIER_][myRank], -1);
-    writeMetaData(_MPI_BARRIER_, 0, 0, -1, 0, 0, count); 
+    
+    endTime = MPI_Wtime();
+    
   {
     stime = MPI_Wtime();
     _wrap_py_return_val = PMPI_Barrier(arg_0);
     etime = MPI_Wtime();
     insert(&mpiOpTimes[_MPI_BARRIER_], (int)round((etime - stime)));
   }
+  count = setAndGetCount(&opSeqCount[_MPI_BARRIER_][myRank], -1);
+    writeMetaData(_MPI_BARRIER_, 0, 0, -1, 0, 0, count); 
+    startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 
@@ -1014,8 +1010,8 @@ _EXTERN_C_ int MPI_Alltoall(void *arg_0, int arg_1, MPI_Datatype arg_2,
     int _wrap_py_return_val = 0, count;
     totalOps++;
     
-    count = setAndGetCount(&opSeqCount[_MPI_ALLTOALL_][myRank], -1);
-    writeMetaData(_MPI_ALLTOALL_, 0, 0, -1, 0, 0, count); 
+    endTime = MPI_Wtime();
+    
   {
     stime = MPI_Wtime();
     _wrap_py_return_val = PMPI_Alltoall(arg_0, arg_1, arg_2, arg_3, arg_4, 
@@ -1023,6 +1019,9 @@ _EXTERN_C_ int MPI_Alltoall(void *arg_0, int arg_1, MPI_Datatype arg_2,
     etime = MPI_Wtime();
     insert(&mpiOpTimes[_MPI_ALLTOALL_], (int)round((etime - stime)));
   }
+  count = setAndGetCount(&opSeqCount[_MPI_ALLTOALL_][myRank], -1);
+    writeMetaData(_MPI_ALLTOALL_, 0, 0, -1, 0, 0, count); 
+    startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 
@@ -1036,8 +1035,7 @@ _EXTERN_C_ int MPI_Scatter(void *arg_0, int arg_1, MPI_Datatype arg_2,
 { 
     int _wrap_py_return_val = 0, count;
     totalOps++;
-    count = setAndGetCount(&opSeqCount[_MPI_SCATTER_][myRank], -1);
-    writeMetaData(_MPI_SCATTER_, 0, 0, -1, 0, 0, count);
+    endTime = MPI_Wtime();
     {
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Scatter(arg_0, arg_1, arg_2, arg_3, arg_4, 
@@ -1045,6 +1043,9 @@ _EXTERN_C_ int MPI_Scatter(void *arg_0, int arg_1, MPI_Datatype arg_2,
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_SCATTER_], (int)round((etime - stime)));
     }
+    count = setAndGetCount(&opSeqCount[_MPI_SCATTER_][myRank], -1);
+    writeMetaData(_MPI_SCATTER_, 0, 0, -1, 0, 0, count);
+    startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 
@@ -1059,8 +1060,7 @@ _EXTERN_C_ int MPI_Gather(void *arg_0, int arg_1, MPI_Datatype arg_2,
     int _wrap_py_return_val = 0, count;
     totalOps++;
     
-    count = setAndGetCount(&opSeqCount[_MPI_GATHER_][myRank], -1);
-    writeMetaData(_MPI_GATHER_, 0, 0, -1, 0, 0, count);
+    endTime = MPI_Wtime();
  
     {
         stime = MPI_Wtime();
@@ -1069,6 +1069,9 @@ _EXTERN_C_ int MPI_Gather(void *arg_0, int arg_1, MPI_Datatype arg_2,
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_GATHER_], (int)round((etime - stime)));
     }
+    count = setAndGetCount(&opSeqCount[_MPI_GATHER_][myRank], -1);
+    writeMetaData(_MPI_GATHER_, 0, 0, -1, 0, 0, count);
+    startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 
@@ -1082,8 +1085,7 @@ _EXTERN_C_ int MPI_Reduce(void *arg_0, void *arg_1, int arg_2,
 { 
     int _wrap_py_return_val = 0, count;
     totalOps++;
-    count = setAndGetCount(&opSeqCount[_MPI_REDUCE_][myRank], -1);
-    writeMetaData(_MPI_REDUCE_, 0, 0, -1, 0, 0, count); 
+     endTime = MPI_Wtime();
     {
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Reduce(arg_0, arg_1, arg_2, arg_3, arg_4, 
@@ -1091,6 +1093,10 @@ _EXTERN_C_ int MPI_Reduce(void *arg_0, void *arg_1, int arg_2,
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_REDUCE_], (int)round((etime - stime)));
     }
+
+    count = setAndGetCount(&opSeqCount[_MPI_REDUCE_][myRank], -1);
+    writeMetaData(_MPI_REDUCE_, 0, 0, -1, 0, 0, count);
+    startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 
@@ -1104,8 +1110,7 @@ _EXTERN_C_ int MPI_Allreduce(void *arg_0, void *arg_1, int arg_2,
 { 
     int _wrap_py_return_val = 0, count;
     totalOps++;
-    count = setAndGetCount(&opSeqCount[_MPI_ALLREDUCE_][myRank], -1);
-    writeMetaData(_MPI_ALLREDUCE_, 0, 0, -1, 0, 0, count);
+    endTime = MPI_Wtime();
     {
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Allreduce(arg_0, arg_1, arg_2, arg_3, 
@@ -1113,6 +1118,10 @@ _EXTERN_C_ int MPI_Allreduce(void *arg_0, void *arg_1, int arg_2,
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_ALLREDUCE_], (int)round((etime - stime)));
     }
+
+    count = setAndGetCount(&opSeqCount[_MPI_ALLREDUCE_][myRank], -1);
+    writeMetaData(_MPI_ALLREDUCE_, 0, 0, -1, 0, 0, count);
+    startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 
@@ -1126,14 +1135,19 @@ _EXTERN_C_ int MPI_Send(void *buf, int cnt, MPI_Datatype datatype, int dest,
     double latency;
     latency = (0.000000291935 * cnt *sizeof(datatype)) + 0.000598493;
     totalOps++;
+    endTime = MPI_Wtime();
+    
     {
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Send(buf, cnt, datatype, dest, tag, comm);
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_SEND_], (int)round((etime - stime)));
     }
+
     count = setAndGetCount(&opSeqCount[_MPI_SEND_][dest], tag);
-    writeMetaData(_MPI_SEND_, myRank, dest, tag, cnt, latency, count);
+    writeMetaData(_MPI_SEND_, myRank, dest, tag, cnt * sizeof(datatype), latency, count);
+    startTime = MPI_Wtime();
+
     return _wrap_py_return_val;
 }
 
@@ -1147,14 +1161,16 @@ _EXTERN_C_ int MPI_Isend(void *buf, int cnt, MPI_Datatype datatype, int dest,
     double latency;
     latency = (0.000000291935 * cnt *sizeof(datatype)) + 0.000598493;
     totalOps++;
+    endTime = MPI_Wtime();
     {
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Isend(buf, cnt, datatype, dest, tag, comm, request);
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_ISEND_], (int)round((etime - stime)));
     }
-     count = setAndGetCount(&opSeqCount[_MPI_ISEND_][dest], tag);
-    writeMetaData(_MPI_ISEND_, myRank, dest, tag, cnt, latency, count);
+    count = setAndGetCount(&opSeqCount[_MPI_ISEND_][dest], tag);
+    writeMetaData(_MPI_ISEND_, myRank, dest, tag, cnt * sizeof(datatype), latency, count);
+    startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 
@@ -1167,8 +1183,8 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
 { 
     int _wrap_py_return_val = 0, count;
     totalOps++;
-     count = setAndGetCount(&opSeqCount[_MPI_RECV_][source], tag);
-    writeMetaData(_MPI_RECV_, myRank, source, tag, cnt, 0, count);
+    endTime = MPI_Wtime();
+     
     {
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Recv(buf, cnt, datatype, source, tag, 
@@ -1176,6 +1192,10 @@ _EXTERN_C_ int MPI_Recv(void *buf, int cnt, MPI_Datatype datatype, int source,
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_RECV_], (int)round((etime - stime)));
     }
+
+    count = setAndGetCount(&opSeqCount[_MPI_RECV_][source], tag);
+    writeMetaData(_MPI_RECV_, myRank, source, tag, cnt, 0, count);
+    startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 
@@ -1189,8 +1209,7 @@ _EXTERN_C_  int MPI_Irecv(void *buf, int cnt, MPI_Datatype datatype, int source,
 { 
     int _wrap_py_return_val = 0, count;
     totalOps++;
-    count = setAndGetCount(&opSeqCount[_MPI_IRECV_][source], tag);
-    writeMetaData(_MPI_IRECV_, myRank, source, tag, cnt, 0, count);
+    endTime = MPI_Wtime();
     {
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Irecv(buf, cnt, datatype, source, tag, 
@@ -1198,6 +1217,9 @@ _EXTERN_C_  int MPI_Irecv(void *buf, int cnt, MPI_Datatype datatype, int source,
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_IRECV_], (int)round((etime - stime)));
     }
+    count = setAndGetCount(&opSeqCount[_MPI_IRECV_][source], tag);
+    writeMetaData(_MPI_IRECV_, myRank, source, tag, cnt, 0, count);
+    startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 /* ================== C Wrappers for MPI_Wait ================== */
@@ -1206,15 +1228,18 @@ _EXTERN_C_ int MPI_Wait(MPI_Request *arg_0, MPI_Status *arg_1)
 { 
     int _wrap_py_return_val = 0, count;
     totalOps++;
+    endTime = MPI_Wtime();
     
-    count = setAndGetCount(&opSeqCount[_MPI_WAIT_][myRank], -1);
-    writeMetaData(_MPI_WAIT_, 0, 0, -1, 0, 0, count);
     {
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Wait(arg_0, arg_1);
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_WAIT_], (int)round((etime - stime)));
     }
+
+    count = setAndGetCount(&opSeqCount[_MPI_WAIT_][myRank], -1);
+    writeMetaData(_MPI_WAIT_, myRank, 0, -1, 0, 0, count);
+    startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 
@@ -1227,18 +1252,19 @@ _EXTERN_C_ int MPI_Waitall(int reqCount, MPI_Request *arg_1, MPI_Status *arg_2)
     for(i = 0; i < reqCount; ++i)
     {
         totalOps++;
-        count = setAndGetCount(&opSeqCount[_MPI_WAIT_][myRank], -1);
-        writeMetaData(_MPI_WAIT_, 0, 0, -1, 0, 0, count);
-
+        
+        endTime = MPI_Wtime();
         stime = MPI_Wtime();
       _wrap_py_return_val = PMPI_Waitall(reqCount, arg_1, arg_2);
+
       etime = MPI_Wtime();
+      count = setAndGetCount(&opSeqCount[_MPI_WAIT_][myRank], -1);
+        writeMetaData(_MPI_WAIT_, myRank, 0, -1, 0, 0, count);
+        startTime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_WAIT_], (int)round((etime - stime)));
     }
     
-    {
-     
-    }
+   
     return _wrap_py_return_val;
 }
 
@@ -1279,6 +1305,7 @@ _EXTERN_C_ int MPI_Init(int *argc, char ***argv)
     sprintf(buf, "%d", myRank); strncat(fileName, buf, sizeof(buf));
     strncat(fileName, ".txt", 4);
     count = setAndGetCount(&opSeqCount[_MPI_INIT_][myRank], -1);
+    startTime = MPI_Wtime();
     writeMetaData(_MPI_INIT_, 0, 0, -1, 0, 0, count);
     if(myRank == 0)
     {
@@ -1313,6 +1340,7 @@ _EXTERN_C_ int MPI_Finalize()
         totalOps++;
 
     count = setAndGetCount(&opSeqCount[_MPI_FINALIZE_][myRank], -1);
+    endTime = MPI_Wtime();
     writeMetaData(_MPI_FINALIZE_, 0, 0, -1, 0, 0, count);    
     PMPI_Barrier(MPI_COMM_WORLD);
     bufKey = (char*)malloc(50);
