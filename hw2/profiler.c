@@ -115,6 +115,7 @@ typedef struct graphVertex
 {
     char *key;
     char *sendTarget;
+    char *recvTarget;
     char *opName;
     int fromRank, toRank;
     int tag, opSeq;
@@ -138,12 +139,23 @@ struct llist
     int vertex;
     struct llist *next;
 }*root = NULL, *front = NULL, *rear = NULL;
- 
+
+struct requestList
+{
+    char *waitingOn;
+    MPI_Request *request;
+    int visited;
+    struct requestList *next;
+} *requestHead = NULL;
+
+MPI_Request *curRequest = NULL; 
+
 int myRank, numNodes;
 FILE *fin, *fout;
 char *baseFileName = "tmp", *fileName;
 
 double startTime, endTime, discoveryTime, stime, etime;
+double globalEndTime = 0;
 
 int totalOps = 0, *numVertices, numCollectives = 0;
 graphVertex **keys;
@@ -188,6 +200,7 @@ graph* createGraph(int numGraphVertices)
     {
         Graph->vertexListArray[i].root = NULL;
         Graph->vertexListArray[i].key = Graph->vertexListArray[i].opName = NULL;
+        Graph->vertexListArray[i].recvTarget = NULL;
         Graph->vertexListArray[i].id = i;
     }
  
@@ -242,6 +255,30 @@ void initOpSeqCount()
     for(i = 0; i < _NUM_MPI_OPS_; i++)
         for(j = 0; j < numNodes; j++)
             opSeqCount[i][j].head = NULL;
+}
+
+
+char* getWaitingOnKey(MPI_Request *request)
+{
+    struct requestList *cur = requestHead;
+    while(cur)
+    {
+        if(cur->request == request && cur->visited != 1)
+        {
+            cur->visited = 1;
+            return cur->waitingOn;
+        }
+        cur = cur->next;
+    }
+}
+
+void insertRequest(char *waitingOn, MPI_Request *request)
+{
+    struct requestList *new = (struct requestList*)malloc(sizeof(struct requestList));
+    new->waitingOn = waitingOn;
+    new->request = request;
+    new->next = requestHead;
+    requestHead = new;
 }
 
 int setAndGetCount(opCount *op, int tag)
@@ -358,7 +395,7 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                    long int bytes, double latency, int opSeq)
 {
     vertexMetaData tmp;
-    char *buf, *bufStr;
+    char *buf, *bufStr, *_buf;
 
     if(lastParentKey == NULL)
         lastParentKey = "NULL";
@@ -398,12 +435,15 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                         sprintf(buf, "%d", (int)round((endTime - startTime)));
                         fprintf(fout, "%s", buf);
                         fprintf(fout, "%s", FOUR_SPACES);
-                        if(mpiOp == _MPI_SEND_)
-                            generateKey(tmp.interTreeChild, _MPI_RECV_, fromRank, 
+                        generateKey(tmp.interTreeChild, _MPI_RECV_, fromRank, 
                                     toRank, tag, opSeq);
-                        else generateKey(tmp.interTreeChild, _MPI_IRECV_, fromRank, 
+                        _buf = (char*)malloc(50);
+                        strcpy(_buf, tmp.interTreeChild);
+                        strcat(_buf, "||");
+                        generateKey(tmp.interTreeChild, _MPI_IRECV_, fromRank, 
                                     toRank, tag, opSeq);
-                        fprintf(fout, "%s", tmp.interTreeChild);
+                        strcat(_buf, tmp.interTreeChild);
+                        fprintf(fout, "%s", _buf);
                         fprintf(fout, "%s", FOUR_SPACES);
                         sprintf(buf, "%d", (int)round(latency));
                         fprintf(fout, "%s", buf);
@@ -458,9 +498,12 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                                     toRank, tag, opSeq);
                         fprintf(fout, "%s", tmp.key);
                         fprintf(fout, "%s", FOUR_SPACES);   
-                        buf = malloc(10);
+                        buf = (char*)malloc(10);
                         sprintf(buf, "%d", (int)round((endTime - startTime)));
                         fprintf(fout, "%s", buf);
+                        fprintf(fout, "%s", FOUR_SPACES);
+                        _buf = getWaitingOnKey(curRequest);
+                        fprintf(fout, "%s", _buf);
                         fprintf(fout, "%s", FOUR_SPACES);
                         fprintf(fout, "%s", "\n");
                         
@@ -470,8 +513,8 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
         
         case _MPI_FINALIZE_ : 
                         fout = fopen(fileName, "a");
-                        if(myRank == 0)
-                        {
+                        //if(myRank == 0)
+                        //{
                             tmp.key = malloc(30);
                             generateKey(tmp.key, mpiOp, fromRank, 
                                         toRank, tag, opSeq);
@@ -483,7 +526,7 @@ void writeMetaData(int mpiOp, int fromRank, int toRank, int tag,
                             sprintf(buf, "%d", (int)round((endTime - startTime)));
                             fprintf(fout, "%s", buf);
                             fprintf(fout, "%s", "\n");
-                        }
+                        //}
                         buf = malloc(10); 
                         sprintf(buf, "%d", totalOps);
                         bufStr = malloc(strlen("totalOps=") + strlen(buf) + 1);
@@ -779,7 +822,11 @@ void writeToCritPathOut(graph *Graph)
             sprintf(buf, "%s %d", Graph->vertexListArray[criticalPath[i].src].opName,
                     Graph->vertexListArray[criticalPath[i].src].fromRank);
             fprintf(fout, "%s\n", buf);
-            sprintf(buf, "%ld", criticalPath[i].bytes);
+            if((strcmp(Graph->vertexListArray[criticalPath[i].src].opName, "MPI_Recv")== 0)
+                ||(strcmp(Graph->vertexListArray[criticalPath[i].src].opName, "MPI_Irecv")== 0)
+                ||(strcmp(Graph->vertexListArray[criticalPath[i].src].opName, "MPI_Wait")== 0))
+                sprintf(buf, "%ld", criticalPath[i].bytes);
+            else sprintf(buf, "%ld", criticalPath[i].weight);
             fprintf(fout, "%s\n", buf);   
         }
         else if((strcmp(Graph->vertexListArray[criticalPath[i].src].opName, "MPI_Recv")== 0)
@@ -1133,6 +1180,8 @@ _EXTERN_C_ int MPI_Send(void *buf, int cnt, MPI_Datatype datatype, int dest,
 { 
     int _wrap_py_return_val = 0, count;
     double latency;
+    int dtypeSize;
+    MPI_Type_size(datatype, &dtypeSize);
     latency = (0.000000291935 * cnt *sizeof(datatype)) + 0.000598493;
     totalOps++;
     endTime = MPI_Wtime();
@@ -1145,7 +1194,7 @@ _EXTERN_C_ int MPI_Send(void *buf, int cnt, MPI_Datatype datatype, int dest,
     }
 
     count = setAndGetCount(&opSeqCount[_MPI_SEND_][dest], tag);
-    writeMetaData(_MPI_SEND_, myRank, dest, tag, cnt * sizeof(datatype), latency, count);
+    writeMetaData(_MPI_SEND_, myRank, dest, tag, cnt * dtypeSize, latency, count);
     startTime = MPI_Wtime();
 
     return _wrap_py_return_val;
@@ -1159,6 +1208,9 @@ _EXTERN_C_ int MPI_Isend(void *buf, int cnt, MPI_Datatype datatype, int dest,
 { 
     int _wrap_py_return_val = 0, count;
     double latency;
+    int dtypeSize;
+    char *tmp = NULL;
+    MPI_Type_size(datatype, &dtypeSize);
     latency = (0.000000291935 * cnt *sizeof(datatype)) + 0.000598493;
     totalOps++;
     endTime = MPI_Wtime();
@@ -1168,8 +1220,12 @@ _EXTERN_C_ int MPI_Isend(void *buf, int cnt, MPI_Datatype datatype, int dest,
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_ISEND_], (int)round((etime - stime)));
     }
-    count = setAndGetCount(&opSeqCount[_MPI_ISEND_][dest], tag);
-    writeMetaData(_MPI_ISEND_, myRank, dest, tag, cnt * sizeof(datatype), latency, count);
+
+    tmp = (char*)malloc(50);
+    count = setAndGetCount(&opSeqCount[_MPI_SEND_][dest], tag);
+    writeMetaData(_MPI_ISEND_, myRank, dest, tag, cnt * dtypeSize, latency, count);
+    generateKey(tmp, _MPI_ISEND_, myRank, dest, tag, count);
+    insertRequest(tmp, request);
     startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
@@ -1208,6 +1264,7 @@ _EXTERN_C_  int MPI_Irecv(void *buf, int cnt, MPI_Datatype datatype, int source,
 
 { 
     int _wrap_py_return_val = 0, count;
+    char *tmp;
     totalOps++;
     endTime = MPI_Wtime();
     {
@@ -1217,22 +1274,26 @@ _EXTERN_C_  int MPI_Irecv(void *buf, int cnt, MPI_Datatype datatype, int source,
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_IRECV_], (int)round((etime - stime)));
     }
-    count = setAndGetCount(&opSeqCount[_MPI_IRECV_][source], tag);
+
+    tmp = (char*)malloc(50);
+    count = setAndGetCount(&opSeqCount[_MPI_RECV_][source], tag);
     writeMetaData(_MPI_IRECV_, myRank, source, tag, cnt, 0, count);
+    generateKey(tmp, _MPI_IRECV_, source, myRank, tag, count);
+    insertRequest(tmp, request);
     startTime = MPI_Wtime();
     return _wrap_py_return_val;
 }
 /* ================== C Wrappers for MPI_Wait ================== */
-_EXTERN_C_ int PMPI_Wait(MPI_Request *arg_0, MPI_Status *arg_1);
-_EXTERN_C_ int MPI_Wait(MPI_Request *arg_0, MPI_Status *arg_1) 
+_EXTERN_C_ int PMPI_Wait(MPI_Request *request, MPI_Status *arg_1);
+_EXTERN_C_ int MPI_Wait(MPI_Request *request, MPI_Status *arg_1) 
 { 
     int _wrap_py_return_val = 0, count;
     totalOps++;
     endTime = MPI_Wtime();
-    
+    curRequest = request;
     {
-        stime = MPI_Wtime();
-      _wrap_py_return_val = PMPI_Wait(arg_0, arg_1);
+      stime = MPI_Wtime();
+      _wrap_py_return_val = PMPI_Wait(request, arg_1);
       etime = MPI_Wtime();
       insert(&mpiOpTimes[_MPI_WAIT_], (int)round((etime - stime)));
     }
@@ -1244,8 +1305,8 @@ _EXTERN_C_ int MPI_Wait(MPI_Request *arg_0, MPI_Status *arg_1)
 }
 
 /* ================== C Wrappers for MPI_Waitall ================== */
-_EXTERN_C_ int PMPI_Waitall(int reqCount, MPI_Request *arg_1, MPI_Status *arg_2);
-_EXTERN_C_ int MPI_Waitall(int reqCount, MPI_Request *arg_1, MPI_Status *arg_2) 
+_EXTERN_C_ int PMPI_Waitall(int reqCount, MPI_Request *request, MPI_Status *arg_2);
+_EXTERN_C_ int MPI_Waitall(int reqCount, MPI_Request *request, MPI_Status *arg_2) 
 { 
     int _wrap_py_return_val = 0, i, count;
 
@@ -1254,8 +1315,9 @@ _EXTERN_C_ int MPI_Waitall(int reqCount, MPI_Request *arg_1, MPI_Status *arg_2)
         totalOps++;
         
         endTime = MPI_Wtime();
+        curRequest = &request[i];
         stime = MPI_Wtime();
-      _wrap_py_return_val = PMPI_Waitall(reqCount, arg_1, arg_2);
+      _wrap_py_return_val = PMPI_Waitall(reqCount, request, arg_2);
 
       etime = MPI_Wtime();
       count = setAndGetCount(&opSeqCount[_MPI_WAIT_][myRank], -1);
@@ -1326,21 +1388,24 @@ _EXTERN_C_ int MPI_Finalize()
     char *buf = malloc(20);
     char *tmpFileName;
     char ch, *bufKey, *line = NULL, *bufLine = NULL;
+    char *starget, *tokens;
     ssize_t read; 
     size_t len = 0;
     int idInMatrix, u, count;
     adjList *v;
     int countTillEquals = 0, i, j, k, t, totalVerticesSoFar = 0;
-    int firstNode, lastNode;
+    int firstNode, lastNode, ci, cj, flag = 10;
     FILE *fp; 
     graphVertex *vals = NULL;
     struct llist *cur;
 
-    if(myRank == 0)
+    //if(myRank == 0)
         totalOps++;
 
     count = setAndGetCount(&opSeqCount[_MPI_FINALIZE_][myRank], -1);
     endTime = MPI_Wtime();
+    //PMPI_Reduce(&endTime, &globalEndTime, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    //endTime = globalEndTime;
     writeMetaData(_MPI_FINALIZE_, 0, 0, -1, 0, 0, count);    
     PMPI_Barrier(MPI_COMM_WORLD);
     bufKey = (char*)malloc(50);
@@ -1402,6 +1467,9 @@ _EXTERN_C_ int MPI_Finalize()
                                 case 0: keys[i][j].sendTarget = 
                                     (char*)malloc(strlen(bufKey)+1);
                                         strcpy(keys[i][j].sendTarget, bufKey);
+                                        keys[i][j].recvTarget = 
+                                    (char*)malloc(strlen(bufKey)+1);
+                                        strcpy(keys[i][j].recvTarget, bufKey);
                                         break;
                                 case 1: keys[i][j].interTreeWeight = atoi(bufKey);
                                         break;
@@ -1425,36 +1493,50 @@ _EXTERN_C_ int MPI_Finalize()
         rankOffsetInMatrix[0] = 0;
         for (i = 1; i < numNodes; ++i)
         {
-            numGraphVertices += numVertices[i] - numCollectives; 
+            numGraphVertices += numVertices[i] - numCollectives - 1; 
             rankOffsetInMatrix[i] = numGraphVertices - 
-                                    (numVertices[i] - numCollectives);
+                                    (numVertices[i] - numCollectives) + 1;
         }
         rankOffsetInMatrix[numNodes] = numGraphVertices;
-
+        
         Graph = createGraph(numGraphVertices);        
         j = 0;
 
-
         for(i = 0; i < numNodes; i++)
         {
-
-            for(k = 0; k < numVertices[i]; k++)
+            if(i == 0)
+                lastNode = numVertices[i];
+            else lastNode = numVertices[i] - 1;
+            for(k = 0; k < lastNode; k++)
             {
-                if(i == 0)
+                if(keys[i][k].opName != NULL)
                 {
-                    Graph->vertexListArray[j].key = (char*)malloc(strlen(keys[i][k].key)+1);
-                    strcpy(Graph->vertexListArray[j].key, keys[i][k].key);
-                    decomposeKey(&Graph->vertexListArray[j]);
-                    j++;
-                }
-                else
-                {
-                    if(!isCollective(keys[i][k].opName))
+                    if(i == 0)
                     {
                         Graph->vertexListArray[j].key = (char*)malloc(strlen(keys[i][k].key)+1);
                         strcpy(Graph->vertexListArray[j].key, keys[i][k].key);
+                        if(strcmp(keys[i][k].opName, "MPI_Wait")==0)
+                        {
+                            Graph->vertexListArray[j].recvTarget = (char*)malloc(strlen(keys[i][k].recvTarget)+1);
+                            strcpy(Graph->vertexListArray[j].recvTarget, keys[i][k].recvTarget);
+                        }
                         decomposeKey(&Graph->vertexListArray[j]);
                         j++;
+                    }
+                    else
+                    {
+                        if(!isCollective(keys[i][k].opName))
+                        {
+                            Graph->vertexListArray[j].key = (char*)malloc(strlen(keys[i][k].key)+1);
+                            strcpy(Graph->vertexListArray[j].key, keys[i][k].key);
+                            if(strcmp(keys[i][k].opName, "MPI_Wait")==0)
+                            {
+                                Graph->vertexListArray[j].recvTarget = (char*)malloc(strlen(keys[i][k].recvTarget)+1);
+                                strcpy(Graph->vertexListArray[j].recvTarget, keys[i][k].recvTarget);
+                            }
+                            decomposeKey(&Graph->vertexListArray[j]);
+                            j++;
+                        }
                     }
                 }
             }
@@ -1471,68 +1553,127 @@ _EXTERN_C_ int MPI_Finalize()
             else
             {
                 firstNode = 0;
-                lastNode = numVertices[i] - 1;
+                lastNode = numVertices[i] - 2;
             }
+
             if(i)
             {
-                if(isCollective(keys[i][firstNode].opName))
-                    addEdge(Graph, 0, 1, keys[i][firstNode].inTreeWeight, 0);  
-                else addEdge(Graph, 0, idInGraph(Graph, keys[i][firstNode].key, i), 
-                             keys[i][firstNode].inTreeWeight, 0);
-                
-                if(isCollective(keys[i][lastNode].opName))
-                    addEdge(Graph, idInGraph(Graph, keys[i][lastNode].key, 0), 
-                            numVertices[0] - 1, 
-                            keys[0][numVertices[0]-1].inTreeWeight, 0);  
-                else
+                if(firstNode>=0 && lastNode >=0 && 
+                    (keys[i][firstNode].opName != NULL || keys[i][lastNode].opName != NULL))
                 { 
-                    if((strcmp(keys[i][lastNode].opName,"MPI_Send")==0)
-                        ||(strcmp(keys[i][lastNode].opName,"MPI_Isend")==0))
-
-                        addEdge(Graph, idInGraph(Graph,keys[i][lastNode].key,i), 
-                                idInGraph(Graph, keys[i][lastNode].sendTarget,keys[i][lastNode].toRank), 
-                                keys[i][lastNode].interTreeWeight, keys[i][lastNode].bytes);
+                    if(isCollective(keys[i][firstNode].opName))
+                        addEdge(Graph, 0, 1, keys[i][firstNode].inTreeWeight, 0);  
+                    else addEdge(Graph, 0, idInGraph(Graph, keys[i][firstNode].key, i), 
+                                 keys[i][firstNode].inTreeWeight, 0);
                     
-                    addEdge(Graph, rankOffsetInMatrix[i+1] - 1, 
-                            numVertices[0] -1, keys[0][numVertices[0]-1].inTreeWeight, 0);
+                    if(isCollective(keys[i][lastNode].opName))
+                        addEdge(Graph, idInGraph(Graph, keys[i][lastNode].key, 0), 
+                                numVertices[0] - 1, 
+                                keys[i][numVertices[i]-1].inTreeWeight, 0);  
+                    else
+                    { 
+                        if((strcmp(keys[i][lastNode].opName,"MPI_Send")==0)
+                            ||(strcmp(keys[i][lastNode].opName,"MPI_Isend")==0))
+                        {
+                            starget = (char*)malloc(50);
+                            strcpy(starget, keys[i][lastNode].sendTarget);
+                            tokens = strtok(starget, "|");
+                            if(idInGraph(Graph, tokens,keys[i][lastNode].toRank) == -1)
+                                tokens = strtok(NULL, "|");
+
+                            else flag = 0;
+                           
+                            // Check for a wait to add to
+                            for(ci = rankOffsetInMatrix[keys[i][lastNode].toRank]; 
+                                ci < rankOffsetInMatrix[keys[i][lastNode].toRank + 1]; ++ci)
+                            {
+                                if(strcmp(Graph->vertexListArray[ci].opName, "MPI_Wait")==0)
+                                {
+                                    if(strcmp(Graph->vertexListArray[ci].recvTarget, tokens)==0)
+                                    {
+                                        flag = 0;
+                                        addEdge(Graph, idInGraph(Graph,keys[i][lastNode].key,i), 
+                                                    ci, keys[i][t].interTreeWeight, keys[i][lastNode].bytes);
+                                    }
+                                }
+                            }
+                            if(idInGraph(Graph, tokens,keys[i][t].toRank) == -1 && flag)
+                                tokens = strtok(NULL, "|");
+                            if(flag)
+                                addEdge(Graph, idInGraph(Graph,keys[i][lastNode].key,i), 
+                                        idInGraph(Graph, tokens, keys[i][lastNode].toRank), 
+                                        keys[i][lastNode].interTreeWeight, keys[i][lastNode].bytes);
+                        }
+                        addEdge(Graph, rankOffsetInMatrix[i+1] - 1, 
+                                numVertices[0] -1, keys[i][numVertices[i]-1].inTreeWeight, 0);
+                    }
                 }
             }
-            for(t = 0; t < numVertices[i]-1; t++)
+            for(t = 0; t < lastNode; t++)
             {
-                // Current Single op Send/Isend - One Span to Recv also
-                    if(isCollective(keys[i][t].opName))
-                    { 
-                        if(isCollective(keys[i][t+1].opName))
-                        {
-                            addEdge(Graph, idInGraph(Graph,keys[i][t].key,0),
-                                idInGraph(Graph,keys[i][t+1].key,0),
-                                keys[i][t+1].inTreeWeight, 0);
-                        }
-                        else addEdge(Graph, idInGraph(Graph,keys[i][t].key,0),
-                                idInGraph(Graph,keys[i][t+1].key,i),
-                                keys[i][t+1].inTreeWeight, 0);
-                    }
-                    else 
-                    {
-                        if((strcmp(keys[i][t].opName, "MPI_Send") == 0) 
-                        || (strcmp(keys[i][t].opName, "MPI_Isend") == 0))
-                        {
-                            addEdge(Graph, idInGraph(Graph,keys[i][t].key,i), 
-                                    idInGraph(Graph, keys[i][t].sendTarget,keys[i][t].toRank), 
-                                    keys[i][t].interTreeWeight, keys[i][t].bytes);
-                        }
-                        if(isCollective(keys[i][t+1].opName))
-                            addEdge(Graph, idInGraph(Graph,keys[i][t].key,i),
+                if(keys[i][t].opName != NULL || keys[i][t+1].opName != NULL)
+                {
+                    // Current Single op Send/Isend - One Span to Recv also
+                        if(isCollective(keys[i][t].opName))
+                        { 
+                            if(isCollective(keys[i][t+1].opName))
+                            {
+                                addEdge(Graph, idInGraph(Graph,keys[i][t].key,0),
                                     idInGraph(Graph,keys[i][t+1].key,0),
                                     keys[i][t+1].inTreeWeight, 0);
-                        else addEdge(Graph, idInGraph(Graph,keys[i][t].key,i),
+                            }
+                            else addEdge(Graph, idInGraph(Graph,keys[i][t].key,0),
                                     idInGraph(Graph,keys[i][t+1].key,i),
                                     keys[i][t+1].inTreeWeight, 0);
+                        }
+                        else 
+                        {
+                            if((strcmp(keys[i][t].opName, "MPI_Send") == 0) 
+                            || (strcmp(keys[i][t].opName, "MPI_Isend") == 0))
+                            {
+                                starget = (char*)malloc(50);
+                                strcpy(starget, keys[i][t].sendTarget);
+                                tokens = strtok(starget, "|");
+                                if(idInGraph(Graph, tokens,keys[i][t].toRank) == -1)
+                                    tokens = strtok(NULL, "|");
 
-                    }
+                                // Check for a wait to add to
+                                for(ci = rankOffsetInMatrix[keys[i][t].toRank]; 
+                                    ci < rankOffsetInMatrix[keys[i][t].toRank + 1]; ++ci)
+                                {
+                                    if(strcmp(Graph->vertexListArray[ci].opName, "MPI_Wait")==0)
+                                    {
+                                        if(strcmp(Graph->vertexListArray[ci].recvTarget, tokens)==0)
+                                        {
+                                            flag = 0;
+                                            addEdge(Graph, idInGraph(Graph,keys[i][t].key,i), 
+                                                    ci, keys[i][t].interTreeWeight, keys[i][t].bytes);
+                                        }
+                                    }
+                                }
+                                if(idInGraph(Graph, tokens,keys[i][t].toRank) == -1 && flag)
+                                    tokens = strtok(NULL, "|");
 
+                                if(flag)
+                                    addEdge(Graph, idInGraph(Graph,keys[i][t].key,i), 
+                                        idInGraph(Graph, tokens, keys[i][t].toRank), 
+                                        keys[i][t].interTreeWeight, keys[i][t].bytes);
+                            }
+
+                            if(isCollective(keys[i][t+1].opName))
+                                addEdge(Graph, idInGraph(Graph,keys[i][t].key,i),
+                                        idInGraph(Graph,keys[i][t+1].key,0),
+                                        keys[i][t+1].inTreeWeight, 0);
+                            else addEdge(Graph, idInGraph(Graph,keys[i][t].key,i),
+                                        idInGraph(Graph,keys[i][t+1].key,i),
+                                        keys[i][t+1].inTreeWeight, 0);
+
+                        }
+                }
             }
         }  
+        //printGraph(Graph);
+
         DFS(Graph);
         cur = root;
         longestPathInGraph(Graph);
